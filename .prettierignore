@@ -1,0 +1,10 @@
+node_modules
+coverage
+dist
+.expo
+android
+ios
+src/data/migrations
+assets
+*.md
+package-lock.json

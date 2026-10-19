@@ -1,0 +1,80 @@
+# German Study
+
+A mobile flashcard app for learning German vocabulary and grammar at A2 level. It pairs a spaced-repetition scheduler (FSRS) with a cheap LLM, so you study the exact words from your class in fresh sentences instead of the same stale card every time.
+
+Built with React Native and Expo. Everything lives on the phone: no accounts, no server.
+
+## Features
+
+- **Add words fast.** Type a single word or paste a whole list in textbook notation (`die Wohnung, -en`, `umziehen, zog um, ist umgezogen`). The LLM fills in article, plural, verb forms and meaning, and you confirm a preview before anything enters the deck.
+- **One item, several cards.** A noun gets separate cards for meaning, gender and plural; verbs get a card for their forms. Each card has its own schedule.
+- **Smart study sessions.** One Study button builds a mixed session from what is due, adding fewer new words when your review pile is big.
+- **Gap-fill exercises.** The LLM writes new A2 sentences around the words you are closest to forgetting, generated ahead of time so reviews work offline.
+- **Word suggestions.** When your queue runs dry, the app suggests A2 words for the current chapter, and you approve each one.
+- **Chapters.** Items are tagged by textbook chapter (Momente A2).
+- **Budget control.** Tracks token usage and stops at a monthly spending cap.
+- **Backups.** Export and import your whole deck as a file.
+
+## Tech stack
+
+| Area      | Tools                                          |
+| --------- | ---------------------------------------------- |
+| App       | Expo, React Native, Expo Router, TypeScript    |
+| Storage   | SQLite (`expo-sqlite`) with Drizzle ORM        |
+| State     | Zustand                                        |
+| Scheduler | [ts-fsrs](https://github.com/open-spaced-repetition/ts-fsrs) |
+| LLM       | Any OpenAI-compatible API (OpenAI, DeepSeek, OpenRouter, or a custom URL) |
+| Testing   | Jest, React Native Testing Library             |
+
+## Getting started
+
+You need Node.js 22 and either the [Expo Go](https://expo.dev/go) app, an Android emulator or an iOS simulator.
+
+```bash
+npm install
+npm start
+```
+
+Then scan the QR code with Expo Go, or press `a` for Android or `i` for iOS.
+
+### Connecting an LLM
+
+Open **Settings** in the app, pick a provider, and paste your API key. The key is stored in the device's secure storage and never leaves the phone except to call that provider.
+
+To try the app without an API key or spending money, run the local mock server:
+
+```bash
+node scripts/mock-llm-server.js
+```
+
+Then choose the **Custom** provider in Settings with base URL `http://10.0.2.2:8787/v1` (Android emulator) and key `test-key`.
+
+## Scripts
+
+| Command               | What it does                                  |
+| --------------------- | --------------------------------------------- |
+| `npm start`           | Start the Expo dev server                     |
+| `npm test`            | Run the tests                                 |
+| `npm run typecheck`   | Check types                                   |
+| `npm run lint`        | Lint the code                                 |
+| `npm run format`      | Format the code with Prettier                 |
+| `npm run db:generate` | Generate a migration after changing the schema |
+| `npm run ci`          | Run every check, the same as CI               |
+
+## Project structure
+
+```
+src/
+  app/        Screens and routes (Expo Router)
+  core/       Pure logic: scheduling, grading, session planning, list parsing
+  data/       SQLite schema, migrations and repositories
+  features/   Screen components grouped by feature
+  jobs/       Background work like prefetching exercises
+  llm/        Provider adapters, prompts and cost tracking
+  ui/         Shared UI components and theme
+scripts/      Mock LLM server and data build scripts
+```
+
+## Status
+
+Work in progress. The deck, scheduler, word entry and gap-fill exercises work. Next up: translation and correction exercises, grammar drills, mini stories, chat roleplay, and stats with streaks.

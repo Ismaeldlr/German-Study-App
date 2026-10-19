@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Migrations match the schema
+        run: |
+          npx drizzle-kit check
+          npx drizzle-kit generate --name ci-drift-check
+          if [ -n "$(git status --porcelain src/data/migrations)" ]; then
+            echo "src/data/schema.ts changed without a migration. Run npm run db:generate."
+            git status --porcelain src/data/migrations
+            exit 1
+          fi
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Format
+        run: npm run format:check
+      - name: Tests
+        run: npm test -- --ci
