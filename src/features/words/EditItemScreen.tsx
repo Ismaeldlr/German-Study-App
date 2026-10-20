@@ -1,9 +1,11 @@
-import { router } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import { useState } from 'react';
 import { View } from 'react-native';
 
 import { validateFields, withNounCheck, type Draft, type DraftFields } from '@/core/drafts';
+import { validateGrammar, type GrammarFields } from '@/core/grammar';
 import { checkNounAgainstList } from '@/data/nouns';
+import { getGrammarPoint, grammarFieldsOf, updateGrammarItem } from '@/data/repos/grammar';
 import { getItem, updateItem } from '@/data/repos/items';
 import type { ItemRow } from '@/data/schema';
 import { AppText } from '@/ui/AppText';
@@ -12,6 +14,7 @@ import { Banner, Screen, Section } from '@/ui/layout';
 import { UmlautBar } from '@/ui/umlaut';
 
 import { DraftForm } from '../add/DraftForm';
+import { GrammarForm } from '../add/GrammarForm';
 import { ChapterPicker } from '../chapters/ChapterPicker';
 import { useServices } from '../services';
 
@@ -25,7 +28,56 @@ export function EditItemScreen({ itemId }: { itemId: number }) {
       </Screen>
     );
   }
-  return <EditForm item={item} />;
+  return item.kind === 'grammar' ? <EditGrammarForm item={item} /> : <EditForm item={item} />;
+}
+
+function EditGrammarForm({ item }: { item: ItemRow }) {
+  const { db, now } = useServices();
+  const [fields, setFields] = useState<GrammarFields>(() => {
+    const point = getGrammarPoint(db, item.id);
+    return point
+      ? grammarFieldsOf(point)
+      : { name: item.lemma, label: '', summary: '', examples: [], categories: [] };
+  });
+  const [chapterId, setChapterId] = useState(item.chapterId);
+  const [errors, setErrors] = useState<string[]>([]);
+
+  const save = () => {
+    const problems = validateGrammar(fields);
+    setErrors(problems);
+    if (problems.length) return;
+    updateGrammarItem(db, item.id, fields, chapterId, now().getTime());
+    router.back();
+  };
+
+  return (
+    <Screen
+      testID="edit-grammar"
+      footer={
+        <>
+          <UmlautBar />
+          <View style={{ padding: 16 }}>
+            <Button testID="edit-save" label="Save changes" onPress={save} />
+          </View>
+        </>
+      }
+    >
+      <Stack.Screen options={{ title: 'Edit grammar point' }} />
+      <Section>
+        <GrammarForm fields={fields} onChange={setFields} />
+        <ChapterPicker value={chapterId} onChange={setChapterId} />
+      </Section>
+      {errors.length ? (
+        <Banner tone="error" testID="edit-errors">
+          {errors.map((e) => (
+            <AppText key={e} color="errorText">
+              {e}
+            </AppText>
+          ))}
+        </Banner>
+      ) : null}
+    </Screen>
+  );
 }
 
 function EditForm({ item }: { item: ItemRow }) {

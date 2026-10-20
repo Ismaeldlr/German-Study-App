@@ -11,6 +11,7 @@ export type TableName =
   | 'review'
   | 'mistake'
   | 'exercise'
+  | 'pending_grade'
   | 'chapter'
   | 'suggestion'
   | 'session'

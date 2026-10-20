@@ -63,6 +63,12 @@ export function WordsScreen() {
           onPress={() => router.push('/paste')}
         />
         <Button
+          testID="words-grammar"
+          label="Add grammar"
+          variant="secondary"
+          onPress={() => router.push('/add-grammar')}
+        />
+        <Button
           testID="words-suggestions"
           label={suggestions ? `Suggestions (${suggestions})` : 'Suggest words'}
           variant="secondary"

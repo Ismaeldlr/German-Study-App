@@ -10,6 +10,10 @@ Built with React Native and Expo. Everything lives on the phone: no accounts, no
 - **One item, several cards.** A noun gets separate cards for meaning, gender and plural; verbs get a card for their forms. Each card has its own schedule.
 - **Smart study sessions.** One Study button builds a mixed session from what is due, adding fewer new words when your review pile is big.
 - **Gap-fill exercises.** The LLM writes new A2 sentences around the words you are closest to forgetting, generated ahead of time so reviews work offline.
+- **Translate and correct.** Words you know well come back as English sentences to write in German. The LLM accepts any correct German, marks the errors and shows a more natural version. Offline, answers wait and are graded later.
+- **Grammar points.** Name a rule such as *Dativ nach mit, bei, von*; the LLM writes a short summary and examples, and the rule is drilled with generated five-item drills.
+- **Weak spots.** Every mistake gets a category (articles, case endings, word order…). Recent ones weigh most, and your top weak spot pulls its grammar point into the next session.
+- **Leeches and mix-ups.** Cards you keep forgetting get a memory hook; words you confuse, such as *stellen* and *stehen*, come back together in contrast exercises.
 - **Word suggestions.** When your queue runs dry, the app suggests A2 words for the current chapter, and you approve each one.
 - **Chapters.** Items are tagged by textbook chapter (Momente A2).
 - **Budget control.** Tracks token usage and stops at a monthly spending cap.
@@ -77,4 +81,4 @@ scripts/      Mock LLM server and data build scripts
 
 ## Status
 
-Work in progress. The deck, scheduler, word entry and gap-fill exercises work. Next up: translation and correction exercises, grammar drills, mini stories, chat roleplay, and stats with streaks.
+Work in progress. The deck, scheduler, word entry, gap fills, translations, grammar drills, weak spots and leech handling work. Next up: mini stories, chat roleplay, and stats with streaks.

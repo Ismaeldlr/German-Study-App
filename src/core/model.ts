@@ -33,6 +33,7 @@ export const EXERCISE_MODES = [
   'gap_fill',
   'translation',
   'grammar_drill',
+  'contrast',
   'story',
   'chat',
 ] as const;

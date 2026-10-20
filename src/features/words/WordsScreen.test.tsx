@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { Alert } from 'react-native';
 
 import { createChapter } from '@/data/repos/chapters';
+import { createGrammarItem } from '@/data/repos/grammar';
 import { createItem, getItem } from '@/data/repos/items';
 import { recordReview } from '@/data/repos/study';
 import { card } from '@/data/schema';
@@ -148,5 +149,37 @@ describe('Item detail screen', () => {
     expect(getItem(services.db, id)).toBeUndefined();
     expect(router.back).toHaveBeenCalled();
     alert.mockRestore();
+  });
+});
+
+describe('Grammar points in the deck', () => {
+  it('shows the rule, its examples and what it is about', async () => {
+    const services = await createTestServices();
+    const id = createGrammarItem(
+      services.db,
+      {
+        name: 'Dativ nach mit, bei, von',
+        label: 'dative after mit, bei, von',
+        summary: 'After mit, bei and von, use the dative.',
+        examples: [{ de: 'Ich fahre mit dem Bus.', en: 'I go by bus.' }],
+        categories: ['case_ending'],
+      },
+      null,
+      1,
+    );
+    await renderWithServices(<ItemDetailScreen itemId={id} />, services);
+    expect(screen.getByTestId('item-rule')).toHaveTextContent(
+      /After mit, bei and von, use the dative\..*Ich fahre mit dem Bus\..*About: case endings/,
+    );
+    expect(screen.queryByTestId('item-forms')).not.toBeOnTheScreen();
+    // The example is shown once, under the rule.
+    expect(screen.getAllByText('Ich fahre mit dem Bus.')).toHaveLength(1);
+    expect(screen.getByText(/Apply grammar/)).toBeOnTheScreen();
+  });
+
+  it('adds one from the Words tab', async () => {
+    await renderWithServices(<WordsScreen />);
+    await fireEvent.press(screen.getByRole('button', { name: 'Add grammar' }));
+    expect(router.push).toHaveBeenCalledWith('/add-grammar');
   });
 });

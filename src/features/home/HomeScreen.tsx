@@ -5,19 +5,24 @@ import { formatUsd, plural } from '@/core/format';
 import { summarizeQueue } from '@/core/queue';
 import { DAY_MS } from '@/core/time';
 import { chapterLabel, getChapter } from '@/data/repos/chapters';
+import { unseenGrades, waitingGrades } from '@/data/repos/grading';
 import { allLemmas } from '@/data/repos/items';
+import { listLeeches } from '@/data/repos/leeches';
 import { getAllSettings } from '@/data/repos/settings';
 import { todayQueue } from '@/data/repos/study';
 import { pendingSuggestions } from '@/data/repos/suggestions';
 import { monthToDate } from '@/data/repos/usage';
+import { weakSpots } from '@/data/repos/weak-spots';
 import { AppText } from '@/ui/AppText';
 import { Button } from '@/ui/Button';
+import { ListItem } from '@/ui/controls';
 import { Banner, Row, Screen, Section } from '@/ui/layout';
 
 import { useServices } from '../services';
 import { useLiveQuery } from '../use-live-query';
 import { useOnline } from '../use-online';
 import { usePrefetchOnOpen } from '../use-prefetch';
+import { MISTAKE_LABELS } from '../words/describe';
 
 const EXPORT_NUDGE_MS = 7 * DAY_MS;
 
@@ -30,8 +35,12 @@ export function HomeScreen() {
   const usage = useLiveQuery(() => monthToDate(db, now()), ['llm_usage']);
   const plan = useLiveQuery(
     () => summarizeQueue(todayQueue(db, now())),
-    ['card', 'review', 'item', 'settings'],
+    ['card', 'review', 'item', 'settings', 'exercise', 'pending_grade', 'mistake', 'grammar_note'],
   );
+  const waiting = useLiveQuery(() => waitingGrades(db).length, ['pending_grade']);
+  const graded = useLiveQuery(() => unseenGrades(db).length, ['pending_grade']);
+  const leeches = useLiveQuery(() => listLeeches(db).length, ['card', 'item']);
+  const spots = useLiveQuery(() => weakSpots(db, now()).slice(0, 3), ['mistake']);
   const deckSize = useLiveQuery(() => allLemmas(db).length, ['item']);
   const suggestions = useLiveQuery(() => pendingSuggestions(db).length, ['suggestion']);
   const chapterId = settings['study.currentChapterId'];
@@ -91,6 +100,16 @@ export function HomeScreen() {
               {plural(plan.newItems, 'new word')}
               {plan.newCards ? ` · ${plural(plan.newCards, 'new card')} for words you met` : ''}
             </AppText>
+            {plan.drills || plan.translations ? (
+              <AppText variant="caption" testID="home-production">
+                {[
+                  plan.translations ? plural(plan.translations, 'translation') : null,
+                  plan.drills ? plural(plan.drills, 'grammar drill') : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </AppText>
+            ) : null}
           </View>
           <Button
             testID="home-study"
@@ -101,6 +120,65 @@ export function HomeScreen() {
           />
         </Section>
       )}
+
+      {graded > 0 ? (
+        <Banner tone="success" testID="graded-banner">
+          <AppText color="successText">
+            {plural(graded, 'translation')} graded since you moved on.
+          </AppText>
+          <Button
+            testID="home-graded"
+            label="See the feedback"
+            variant="secondary"
+            onPress={() => router.push('/graded')}
+          />
+        </Banner>
+      ) : waiting > 0 ? (
+        <Banner tone="info" testID="waiting-banner">
+          <AppText>
+            {plural(waiting, 'translation')} {waiting === 1 ? 'waits' : 'wait'} for grading. It
+            happens when the app is online.
+          </AppText>
+          <Button
+            testID="home-waiting"
+            label="See them"
+            variant="secondary"
+            onPress={() => router.push('/graded')}
+          />
+        </Banner>
+      ) : null}
+
+      {leeches > 0 ? (
+        <Banner tone="warning" testID="leeches-banner">
+          <AppText color="warningText">
+            {plural(leeches, 'card')} {leeches === 1 ? 'keeps' : 'keep'} slipping away.
+          </AppText>
+          <Button
+            testID="home-leeches"
+            label="Look at them"
+            variant="secondary"
+            onPress={() => router.push('/leeches')}
+          />
+        </Banner>
+      ) : null}
+
+      {spots.length ? (
+        <Section title="Weak spots" testID="home-weak-spots">
+          {spots.map((s) => (
+            <ListItem
+              key={s.category}
+              title={MISTAKE_LABELS[s.category]}
+              subtitle={`Score ${s.score.toFixed(1)} · ${plural(s.count, 'mistake')}`}
+            />
+          ))}
+          <Button
+            testID="home-weak-spots-all"
+            label="See all"
+            variant="secondary"
+            onPress={() => router.push('/weak-spots')}
+          />
+        </Section>
+      ) : null}
 
       {suggestions > 0 ? (
         <Banner tone="info" testID="suggestions-banner">

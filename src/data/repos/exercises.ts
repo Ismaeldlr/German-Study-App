@@ -1,26 +1,50 @@
 import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 
+import type { ContrastSet, GrammarDrill } from '@/core/drills';
 import { FRESHNESS_WINDOW, isFresh, type GapExercise } from '@/core/gap-fill';
 import type { ExerciseMode } from '@/core/model';
+import type { TranslationExercise } from '@/core/translation';
 
 import { notifyChange } from '../changes';
 import type { DbOrTx } from '../db';
 import { exercise, type ExerciseRow } from '../schema';
 
 /**
- * The cache of generated content. Each row is used once; a card never gets
- * a sentence it saw within its last FRESHNESS_WINDOW exercises.
+ * The cache of generated content. Each row is used once; an item never
+ * gets a sentence it saw within its last FRESHNESS_WINDOW exercises of
+ * that mode. Gap sentences, translations, grammar drills and contrast sets
+ * all live here, told apart by mode.
  */
 
 export interface GapPayload extends GapExercise {
   cardId: number;
 }
 
-export interface CachedGap {
+/** What each cached mode stores as its payload. */
+export interface PayloadByMode {
+  gap_fill: GapPayload;
+  translation: TranslationExercise;
+  grammar_drill: GrammarDrill;
+  contrast: ContrastSet;
+}
+export type CachedMode = keyof PayloadByMode;
+
+export interface Cached<M extends CachedMode> {
   id: number;
+  /** The first target item; for gap sentences and drills, the only one. */
   itemId: number;
+  itemIds: number[];
   topic: string | null;
-  payload: GapPayload;
+  payload: PayloadByMode[M];
+}
+
+export type CachedGap = Cached<'gap_fill'>;
+
+export interface NewExerciseRow<M extends CachedMode> {
+  itemIds: number[];
+  topic: string | null;
+  payload: PayloadByMode[M];
+  hash: string | null;
 }
 
 export interface NewGapRow {
@@ -40,21 +64,23 @@ export interface GenerationInfo {
 }
 
 /** Store a batch, sharing its token cost evenly between the rows. */
-export function saveGapExercises(
+export function saveExercises<M extends CachedMode>(
   db: DbOrTx,
-  rows: readonly NewGapRow[],
+  mode: M,
+  rows: readonly NewExerciseRow<M>[],
   info: GenerationInfo,
   now: number,
-): void {
-  if (rows.length === 0) return;
+): number[] {
+  if (rows.length === 0) return [];
   const share = (tokens: number) => Math.round(tokens / rows.length);
-  db.insert(exercise)
+  const ids = db
+    .insert(exercise)
     .values(
       rows.map((row) => ({
-        mode: 'gap_fill' as const,
-        targetItemIds: [row.itemId],
+        mode,
+        targetItemIds: row.itemIds,
         topic: row.topic,
-        payload: { ...row.exercise, cardId: row.cardId } satisfies GapPayload,
+        payload: row.payload,
         sentenceHash: row.hash,
         provider: info.provider,
         model: info.model,
@@ -64,25 +90,51 @@ export function saveGapExercises(
         createdAt: now,
       })),
     )
-    .run();
+    .returning({ id: exercise.id })
+    .all()
+    .map((r) => r.id);
   notifyChange('exercise');
+  return ids;
 }
 
-const gapRows = (db: DbOrTx) =>
+export function saveGapExercises(
+  db: DbOrTx,
+  rows: readonly NewGapRow[],
+  info: GenerationInfo,
+  now: number,
+): void {
+  saveExercises(
+    db,
+    'gap_fill',
+    rows.map((row) => ({
+      itemIds: [row.itemId],
+      topic: row.topic,
+      payload: { ...row.exercise, cardId: row.cardId },
+      hash: row.hash,
+    })),
+    info,
+    now,
+  );
+}
+
+const liveRows = (db: DbOrTx, mode: CachedMode) =>
   db
     .select()
     .from(exercise)
-    .where(and(eq(exercise.mode, 'gap_fill'), eq(exercise.discarded, false)))
+    .where(and(eq(exercise.mode, mode), eq(exercise.discarded, false)))
     .all();
 
-const targetOf = (row: ExerciseRow) => row.targetItemIds[0];
-
-/** Hashes of the sentences an item was shown, newest first. */
-export function recentHashes(db: DbOrTx, itemId: number, limit = FRESHNESS_WINDOW): string[] {
+/** Hashes of the exercises of a mode an item was shown, newest first. */
+export function recentHashes(
+  db: DbOrTx,
+  itemId: number,
+  limit = FRESHNESS_WINDOW,
+  mode: CachedMode = 'gap_fill',
+): string[] {
   return db
     .select({ hash: exercise.sentenceHash, targets: exercise.targetItemIds })
     .from(exercise)
-    .where(and(eq(exercise.mode, 'gap_fill'), isNotNull(exercise.usedAt)))
+    .where(and(eq(exercise.mode, mode), isNotNull(exercise.usedAt)))
     .orderBy(desc(exercise.usedAt), desc(exercise.id))
     .all()
     .filter((r) => r.targets.includes(itemId) && r.hash)
@@ -90,24 +142,42 @@ export function recentHashes(db: DbOrTx, itemId: number, limit = FRESHNESS_WINDO
     .map((r) => r.hash!);
 }
 
-/** The oldest unused sentence for an item that it has not seen recently. */
-export function nextGapExercise(db: DbOrTx, itemId: number): CachedGap | null {
-  const recent = recentHashes(db, itemId);
-  const row = gapRows(db)
-    .filter((r) => r.usedAt === null && targetOf(r) === itemId)
+/** The oldest unused exercise of a mode for an item that it has not seen recently. */
+export function nextExercise<M extends CachedMode>(
+  db: DbOrTx,
+  mode: M,
+  itemId: number,
+): Cached<M> | null {
+  const recent = recentHashes(db, itemId, FRESHNESS_WINDOW, mode);
+  const row = liveRows(db, mode)
+    .filter((r) => r.usedAt === null && r.targetItemIds.includes(itemId))
     .filter((r) => !r.sentenceHash || isFresh(r.sentenceHash, recent))
     .sort((a, b) => a.createdAt - b.createdAt || a.id - b.id)[0];
-  return row ? toCached(row) : null;
+  return row ? toCached<M>(row) : null;
 }
 
-/** Unused, fresh sentences waiting per item. */
-export function gapCoverage(db: DbOrTx): Map<number, number> {
+export function nextGapExercise(db: DbOrTx, itemId: number): CachedGap | null {
+  return nextExercise(db, 'gap_fill', itemId);
+}
+
+/** Unused exercises of a mode, waiting. */
+export function unusedExercises<M extends CachedMode>(db: DbOrTx, mode: M): Cached<M>[] {
+  return liveRows(db, mode)
+    .filter((r) => r.usedAt === null)
+    .map((r) => toCached<M>(r));
+}
+
+/** Unused exercises waiting per target item. */
+export function coverage(db: DbOrTx, mode: CachedMode): Map<number, number> {
   const counts = new Map<number, number>();
-  for (const row of gapRows(db)) {
-    if (row.usedAt !== null) continue;
-    counts.set(targetOf(row), (counts.get(targetOf(row)) ?? 0) + 1);
+  for (const row of unusedExercises(db, mode)) {
+    for (const id of row.itemIds) counts.set(id, (counts.get(id) ?? 0) + 1);
   }
   return counts;
+}
+
+export function gapCoverage(db: DbOrTx): Map<number, number> {
+  return coverage(db, 'gap_fill');
 }
 
 export function markExerciseUsed(db: DbOrTx, id: number, now: number): void {
@@ -124,9 +194,14 @@ export function discardExercise(db: DbOrTx, id: number, now: number): void {
   notifyChange('exercise');
 }
 
-/** Drop unused sentences for items that left the deck or got suspended. */
+/** Drop unused exercises for items that left the deck or got suspended. */
 export function pruneUnusedFor(db: DbOrTx, keep: (itemId: number) => boolean): number {
-  const stale = gapRows(db).filter((r) => r.usedAt === null && !keep(targetOf(r)));
+  const stale = db
+    .select({ id: exercise.id, targets: exercise.targetItemIds })
+    .from(exercise)
+    .where(isNull(exercise.usedAt))
+    .all()
+    .filter((r) => !r.targets.every(keep));
   for (const row of stale) db.delete(exercise).where(eq(exercise.id, row.id)).run();
   if (stale.length) notifyChange('exercise');
   return stale.length;
@@ -162,17 +237,18 @@ export function exerciseStats(db: DbOrTx): PromptStats[] {
   }));
 }
 
-export function getExercise(db: DbOrTx, id: number): CachedGap | null {
+export function getExercise(db: DbOrTx, id: number): Cached<CachedMode> | null {
   const row = db.select().from(exercise).where(eq(exercise.id, id)).get();
   return row ? toCached(row) : null;
 }
 
-function toCached(row: ExerciseRow): CachedGap {
+function toCached<M extends CachedMode>(row: ExerciseRow): Cached<M> {
   return {
     id: row.id,
-    itemId: targetOf(row),
+    itemId: row.targetItemIds[0],
+    itemIds: row.targetItemIds,
     topic: row.topic,
-    payload: row.payload as GapPayload,
+    payload: row.payload as PayloadByMode[M],
   };
 }
 

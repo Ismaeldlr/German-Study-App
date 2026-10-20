@@ -49,19 +49,22 @@ export function isAtRisk(card: CardSchedule, now: number, scheduler: Scheduler):
   return scheduler.retrievability(card, now + AT_RISK_DAYS * DAY_MS) < AT_RISK_RECALL;
 }
 
-export type PracticeMode = 'classic' | 'gap_fill';
+export type PracticeMode = 'classic' | 'gap_fill' | 'translation' | 'grammar_drill';
 
 /**
  * How a card is practised, by type and maturity. Production cards move to
- * gap fill while learning or young; mature ones stay classic until
- * translations arrive. The other types are classic cards by nature.
+ * gap fill while learning or young, and to translation once mature.
+ * Grammar cards are drilled. The other types are classic cards by nature.
  */
 export function practiceMode(card: {
   type: CardType;
   state: number;
   stability: number;
 }): PracticeMode {
+  if (card.type === 'apply_grammar') return 'grammar_drill';
   if (card.type !== 'produce') return 'classic';
-  if (card.state === CardState.Review && card.stability >= MATURE_STABILITY_DAYS) return 'classic';
+  if (card.state === CardState.Review && card.stability >= MATURE_STABILITY_DAYS) {
+    return 'translation';
+  }
   return 'gap_fill';
 }

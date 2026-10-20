@@ -3,6 +3,7 @@ import {
   buildQueue,
   spaceSiblings,
   summarizeQueue,
+  TRANSLATION_MAX,
   WARMUP_SIZE,
   type QueueCandidate,
 } from './queue';
@@ -10,6 +11,8 @@ import { Rating } from './rating';
 import {
   LEARN_AHEAD_MS,
   accuracy,
+  deferAnswer,
+  dropCards,
   nextEntry,
   progress,
   recordAnswer,
@@ -104,7 +107,7 @@ describe('daily queue', () => {
     expect(spaced.map((e) => e.itemId)).toEqual([1, 2, 3, 1, 1]);
   });
 
-  it('runs a classic warm-up, then gap fill for learning and young production cards', () => {
+  it('runs a classic warm-up, gap fill for young production cards, then translations', () => {
     const due = (itemId: number, type: QueueCandidate['type'], state: number, stability = 5) =>
       card({ itemId, type, state, stability, due: now - itemId * HOUR });
     const cards = [
@@ -123,14 +126,15 @@ describe('daily queue', () => {
       unlockedItemIds: new Set([6, 7]),
     });
     expect(queue.map((e) => [e.itemId, e.type, e.mode])).toEqual([
-      // Warm-up: classic due cards, oldest due first. Mature production stays classic.
+      // Warm-up: classic due cards, oldest due first.
       [5, 'gender', 'classic'],
-      [3, 'produce', 'classic'],
       [2, 'recognize', 'classic'],
       // Gap fill: due learning and young production cards, then new ones.
       [4, 'produce', 'gap_fill'],
       [1, 'produce', 'gap_fill'],
       [6, 'produce', 'gap_fill'],
+      // Production: mature cards in a translation.
+      [3, 'produce', 'translation'],
       // The rest, then new items.
       [7, 'plural', 'classic'],
       [8, 'recognize', 'classic'],
@@ -156,7 +160,115 @@ describe('daily queue', () => {
       card({ itemId: 3 }),
     ];
     const queue = buildQueue(cards, { now, newItemsAllowance: 5, unlockedItemIds: new Set([2]) });
-    expect(summarizeQueue(queue)).toEqual({ due: 1, newCards: 1, newItems: 1 });
+    expect(summarizeQueue(queue)).toEqual({
+      due: 1,
+      newCards: 1,
+      newItems: 1,
+      drills: 0,
+      translations: 0,
+    });
+  });
+});
+
+describe('daily queue: production and grammar', () => {
+  const mature = (itemId: number, hoursAgo: number) =>
+    card({
+      itemId,
+      type: 'produce',
+      state: CardState.Review,
+      stability: 30,
+      due: now - hoursAgo * HOUR,
+    });
+  const grammar = (itemId: number, overrides: Partial<QueueCandidate> = {}) =>
+    card({ itemId, type: 'apply_grammar', state: CardState.Review, stability: 5, ...overrides });
+
+  it('translates at most two mature cards; the rest are asked as classic cards', () => {
+    const cards = [mature(1, 3), mature(2, 2), mature(3, 1)];
+    const queue = buildQueue(cards, { now, newItemsAllowance: 0, unlockedItemIds: new Set() });
+    expect(TRANSLATION_MAX).toBe(2);
+    expect(queue.map((e) => [e.itemId, e.mode])).toEqual([
+      [1, 'translation'],
+      [2, 'translation'],
+      [3, 'classic'],
+    ]);
+  });
+
+  it('drills due grammar after the translations, but only with a drill ready', () => {
+    const cards = [
+      grammar(10, { due: now - HOUR }),
+      grammar(11, { due: now - 2 * HOUR }),
+      mature(1, 1),
+      card({ itemId: 2, state: CardState.Review, due: now - HOUR }),
+    ];
+    const queue = buildQueue(cards, {
+      now,
+      newItemsAllowance: 0,
+      unlockedItemIds: new Set(),
+      drillReady: new Set([10]),
+    });
+    expect(queue.map((e) => [e.itemId, e.mode])).toEqual([
+      [2, 'classic'],
+      [1, 'translation'],
+      [10, 'grammar_drill'],
+    ]);
+  });
+
+  it('pulls one grammar point forward for the top weak spot', () => {
+    const cards = [
+      grammar(10, { due: now + 5 * 24 * HOUR }),
+      grammar(11, { due: now + 2 * 24 * HOUR }),
+      grammar(12, { state: CardState.New }),
+    ];
+    const queue = buildQueue(cards, {
+      now,
+      newItemsAllowance: 0,
+      unlockedItemIds: new Set(),
+      drillReady: new Set([10, 11, 12]),
+      pullForward: new Set([10, 11, 12]),
+    });
+    expect(queue.map((e) => [e.itemId, e.kind])).toEqual([[11, 'review']]);
+  });
+
+  it('introduces a new grammar point as a new item', () => {
+    const cards = [grammar(10, { state: CardState.New, itemCreatedAt: 1 }), card({ itemId: 2 })];
+    const queue = buildQueue(cards, {
+      now,
+      newItemsAllowance: 1,
+      unlockedItemIds: new Set(),
+      drillReady: new Set([10]),
+    });
+    expect(queue.map((e) => [e.itemId, e.kind, e.mode])).toEqual([[2, 'new_item', 'classic']]);
+    const both = buildQueue(cards, {
+      now,
+      newItemsAllowance: 2,
+      unlockedItemIds: new Set(),
+      drillReady: new Set([10]),
+    });
+    expect(both.map((e) => [e.itemId, e.kind, e.mode])).toEqual([
+      [2, 'new_item', 'classic'],
+      [10, 'new_item', 'grammar_drill'],
+    ]);
+  });
+
+  it('leaves out cards whose answer waits for grading', () => {
+    const waiting = mature(1, 1);
+    const queue = buildQueue([waiting, mature(2, 1)], {
+      now,
+      newItemsAllowance: 0,
+      unlockedItemIds: new Set(),
+      excludeCardIds: new Set([waiting.cardId]),
+    });
+    expect(queue.map((e) => e.itemId)).toEqual([2]);
+  });
+
+  it('counts drills and translations for the Home screen', () => {
+    const queue = buildQueue([mature(1, 1), grammar(10, { due: now - HOUR })], {
+      now,
+      newItemsAllowance: 0,
+      unlockedItemIds: new Set(),
+      drillReady: new Set([10]),
+    });
+    expect(summarizeQueue(queue)).toMatchObject({ due: 2, drills: 1, translations: 1 });
   });
 });
 
@@ -238,5 +350,35 @@ describe('session', () => {
     state = recordAnswer(step.state, a, { rating: Rating.Again, nextDue: now + 60_000 }, now);
     step = nextEntry(state, now + 61_000);
     expect(step.entry?.cardId).toBe(1);
+  });
+});
+
+describe('session: exercises that rate several cards', () => {
+  const entry = (cardId: number) => ({
+    cardId,
+    itemId: cardId,
+    type: 'produce' as const,
+    kind: 'review' as const,
+    mode: 'gap_fill' as const,
+  });
+
+  it('drops cards an exercise already rated from the rest of the session', () => {
+    let state = startSession([entry(1), entry(2), entry(3)]);
+    const step = nextEntry(state, now);
+    state = recordAnswer(
+      step.state,
+      entry(1),
+      { rating: Rating.Again, nextDue: now + 60_000 },
+      now,
+    );
+    state = dropCards(state, [1, 3]);
+    expect(state.queue.map((e) => e.cardId)).toEqual([2]);
+    expect(state.learning).toEqual([]);
+    expect(dropCards(state, [])).toBe(state);
+  });
+
+  it('counts answers saved for grading without rating them', () => {
+    const state = deferAnswer(startSession([entry(1)]));
+    expect(state).toMatchObject({ deferred: 1, answered: 0 });
   });
 });

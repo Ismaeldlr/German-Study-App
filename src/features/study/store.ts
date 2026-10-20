@@ -1,12 +1,22 @@
 import { create } from 'zustand';
 
 import type { SlipKind } from '@/core/answers';
+import type { ContrastSet, GrammarDrill } from '@/core/drills';
 import type { GapExercise, GapHint } from '@/core/gap-fill';
 import type { MistakeNote } from '@/core/grading';
+import type { CardType } from '@/core/model';
 import type { QueueEntry } from '@/core/queue';
 import type { Grade } from '@/core/rating';
-import { nextEntry, recordAnswer, startSession, type SessionState } from '@/core/session';
+import {
+  deferAnswer,
+  dropCards,
+  nextEntry,
+  recordAnswer,
+  startSession,
+  type SessionState,
+} from '@/core/session';
 import { localDay } from '@/core/time';
+import type { TranslationExercise, TranslationGrade } from '@/core/translation';
 
 /**
  * UI state for the running session. The database stays the source of
@@ -14,24 +24,50 @@ import { localDay } from '@/core/time';
  * store only remembers where in the session you are.
  */
 
-export type Phase = 'idle' | 'empty' | 'intro' | 'question' | 'feedback' | 'done';
+export type Phase = 'idle' | 'empty' | 'intro' | 'question' | 'grading' | 'feedback' | 'done';
 
-/** How the current card is asked: as a classic card, or in a cached gap sentence. */
+/**
+ * How the current card is asked: as a classic card, or with a cached
+ * exercise. `skip` means it cannot be asked right now (a grammar card back
+ * from a learning step with no drill left) and the session moves on.
+ */
 export type Presentation =
   | { mode: 'classic' }
-  | { mode: 'gap_fill'; exerciseId: number; exercise: GapExercise; hint: GapHint };
+  | { mode: 'gap_fill'; exerciseId: number; exercise: GapExercise; hint: GapHint }
+  | { mode: 'translation'; exerciseId: number; exercise: TranslationExercise }
+  | { mode: 'grammar_drill'; exerciseId: number; drill: GrammarDrill }
+  | { mode: 'contrast'; exerciseId: number; set: ContrastSet }
+  | { mode: 'skip' };
 
 const CLASSIC: Presentation = { mode: 'classic' };
 
 export interface Feedback {
-  outcome: 'correct' | 'slip' | 'wrong' | 'revealed';
+  /** `pending`: saved for grading later, no rating yet. */
+  outcome: 'correct' | 'slip' | 'wrong' | 'revealed' | 'pending';
   expected: string;
   given: string | null;
-  rating: Grade;
+  rating: Grade | null;
   slips: SlipKind[];
   mistakes: MistakeNote[];
   /** The sentence the answer belongs in, for gap fills. */
   context?: { de: string; en: string } | null;
+  /** For exercises that rate several cards: one line per card. */
+  ratings?: { label: string; rating: Grade }[];
+  /** The LLM's grade, for translations. */
+  translation?: TranslationGrade | null;
+  /** An explanation for the whole exercise, such as how two words differ. */
+  note?: string | null;
+  /** The item's memory hook, shown when you got it wrong. */
+  hook?: string | null;
+}
+
+/** One card's new schedule after an answer. */
+export interface AnswerResult {
+  cardId: number;
+  itemId: number;
+  type: CardType;
+  rating: Grade;
+  nextDue: number;
 }
 
 export interface SessionMistake extends MistakeNote {
@@ -49,6 +85,8 @@ interface StudyStore {
   shownAt: number;
   feedback: Feedback | null;
   mistakes: SessionMistake[];
+  /** The waiting answer being graded while you watch. */
+  gradingId: number | null;
   present: (entry: QueueEntry) => Presentation;
   begin(
     sessionId: number,
@@ -61,7 +99,18 @@ interface StudyStore {
   showQuestion(now: number): void;
   /** Ask the current card as a classic card instead, after a bad sentence. */
   useClassic(now: number): void;
-  answered(feedback: Feedback, nextDue: number, lemma: string, now: number): void;
+  /**
+   * Record an answer. `results` holds every card it rated: the current one,
+   * and others an exercise rated with it, which leave the rest of the session.
+   */
+  answered(feedback: Feedback, results: AnswerResult[], lemma: string, now: number): void;
+  grading(id: number): void;
+  /**
+   * The answer waits for grading: no rating now, so the card does not come
+   * back. Neither do the other cards a translation practises, since the
+   * grade rates them all once it lands.
+   */
+  deferred(feedback: Feedback): void;
   finish(): void;
   reset(): void;
 }
@@ -76,6 +125,7 @@ const initial = {
   shownAt: 0,
   feedback: null,
   mistakes: [],
+  gradingId: null,
   present: () => CLASSIC,
 };
 
@@ -95,22 +145,32 @@ export const useStudyStore = create<StudyStore>((set, get) => ({
     set({ ...initial, phase: 'empty' });
   },
   next(now) {
-    const { session, present } = get();
+    const { present } = get();
+    let session = get().session;
     if (!session) return;
-    const step = nextEntry(session, now);
-    if (!step.entry) {
-      set({ session: step.state, entry: null, feedback: null, phase: 'done' });
+    for (;;) {
+      const step = nextEntry(session, now);
+      if (!step.entry) {
+        set({ session: step.state, entry: null, feedback: null, gradingId: null, phase: 'done' });
+        return;
+      }
+      const presentation = present(step.entry);
+      if (presentation.mode === 'skip') {
+        session = step.state;
+        continue;
+      }
+      const intro = step.entry.kind === 'new_item';
+      set({
+        session: step.state,
+        entry: step.entry,
+        presentation,
+        feedback: null,
+        gradingId: null,
+        phase: intro ? 'intro' : 'question',
+        shownAt: now,
+      });
       return;
     }
-    const intro = step.entry.kind === 'new_item';
-    set({
-      session: step.state,
-      entry: step.entry,
-      presentation: intro ? CLASSIC : present(step.entry),
-      feedback: null,
-      phase: intro ? 'intro' : 'question',
-      shownAt: now,
-    });
   },
   showQuestion(now) {
     set({ phase: 'question', shownAt: now });
@@ -118,18 +178,52 @@ export const useStudyStore = create<StudyStore>((set, get) => ({
   useClassic(now) {
     set({ presentation: CLASSIC, phase: 'question', shownAt: now });
   },
-  answered(feedback, nextDue, lemma, now) {
+  answered(feedback, results, lemma, now) {
     const { session, entry, mistakes } = get();
     if (!session || !entry) return;
+    const others = results.filter((r) => r.cardId !== entry.cardId);
+    let next = dropCards(
+      session,
+      others.map((r) => r.cardId),
+    );
+    for (const result of results) {
+      const answeredEntry: QueueEntry =
+        result.cardId === entry.cardId
+          ? entry
+          : {
+              cardId: result.cardId,
+              itemId: result.itemId,
+              type: result.type,
+              kind: 'review',
+              mode: 'classic',
+            };
+      next = recordAnswer(next, answeredEntry, result, now);
+    }
     set({
-      session: recordAnswer(session, entry, { rating: feedback.rating, nextDue }, now),
+      session: next,
       feedback,
+      gradingId: null,
       phase: 'feedback',
       mistakes: [...mistakes, ...feedback.mistakes.map((m) => ({ ...m, lemma }))],
     });
   },
+  grading(id) {
+    set({ phase: 'grading', gradingId: id });
+  },
+  deferred(feedback) {
+    const { session, presentation } = get();
+    if (!session) return;
+    const targets =
+      presentation.mode === 'translation' ? presentation.exercise.targets.map((t) => t.cardId) : [];
+    set({
+      session: deferAnswer(dropCards(session, targets)),
+      feedback,
+      gradingId: null,
+      phase: 'feedback',
+    });
+  },
   finish() {
-    set({ phase: 'done', entry: null, feedback: null });
+    set({ phase: 'done', entry: null, feedback: null, gradingId: null });
   },
   reset() {
     set(initial);

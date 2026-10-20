@@ -3,24 +3,31 @@ import { useEffect, useState } from 'react';
 import { ScrollView, View } from 'react-native';
 
 import { displayLemma } from '@/core/cards';
+import { itemsByWord, setGrade } from '@/core/drills';
 import { plural } from '@/core/format';
 import { fillGap, gapHint } from '@/core/gap-fill';
+import type { MistakeNote } from '@/core/grading';
+import type { ExerciseMode } from '@/core/model';
 import type { QueueEntry } from '@/core/queue';
-import { ratingFor } from '@/core/rating';
+import { ratingFor, type Outcome } from '@/core/rating';
 import { accuracy, progress } from '@/core/session';
 import { localDay } from '@/core/time';
 import type { Db } from '@/data/db';
-import { discardExercise, markExerciseUsed, nextGapExercise } from '@/data/repos/exercises';
+import { discardExercise, markExerciseUsed, nextExercise } from '@/data/repos/exercises';
+import { getGrammarNote } from '@/data/repos/grammar';
+import { markGradesSeen, savePendingGrade } from '@/data/repos/grading';
 import { getSetting } from '@/data/repos/settings';
 import {
   distractorPool,
   finishStudySession,
   getStudyCard,
   recordReview,
+  spotConfusions,
   startStudySession,
   todayQueue,
   usualTimeFor,
 } from '@/data/repos/study';
+import { gradeAnswer, type GradeOutcome } from '@/jobs/grading';
 import { runPrefetch } from '@/jobs/prefetch';
 import { AppText } from '@/ui/AppText';
 import { Button } from '@/ui/Button';
@@ -33,6 +40,13 @@ import { useOnline } from '../use-online';
 import { RATING_LABELS } from '../words/describe';
 import { GapFillQuestion } from './GapFillQuestion';
 import {
+  DrillQuestion,
+  GradingView,
+  TranslationQuestion,
+  TranslationResult,
+  type DrillDone,
+} from './production';
+import {
   FeedbackPanel,
   GenderQuestion,
   IntroCard,
@@ -42,20 +56,23 @@ import {
   VerbFormsQuestion,
   type QuestionResult,
 } from './questions';
-import { useStudyStore, type Feedback, type Presentation } from './store';
+import { useStudyStore, type AnswerResult, type Feedback, type Presentation } from './store';
 
 /**
- * Study session v1. A warm-up of classic cards, then production cards in
- * generated gap sentences, then the rest and today's new words. A gap-fill
- * card without a cached sentence (offline, no key, over budget) is asked as
- * a classic card instead. The session ends at your time target or when the
- * work runs out.
+ * The Study session. A warm-up of classic cards, production cards in
+ * generated gap sentences, one or two translations, grammar drills, then
+ * the rest and today's new words. Words you mix up come as a contrast set.
+ * A card without its cached exercise (offline, no key, over budget) is
+ * asked as a classic card instead. A translation is graded by the LLM
+ * while you wait, or saved to be graded later. The session ends at your
+ * time target or when the work runs out.
  */
 export function StudyScreen() {
   const services = useServices();
   const { db, now } = services;
   const online = useOnline();
   const store = useStudyStore();
+  const [submitted, setSubmitted] = useState('');
 
   useEffect(() => {
     const state = useStudyStore.getState();
@@ -91,63 +108,259 @@ export function StudyScreen() {
   }, [phase, sessionId, session, db, now]);
 
   // Top up the cache when a session starts (later cards can still use the
-  // new sentences) and again when it ends.
+  // new exercises) and again when it ends.
   const sessionDone = phase === 'done';
   useEffect(() => {
     if (online && sessionId !== null) void runPrefetch(services);
   }, [online, sessionId, sessionDone, services]);
 
   const study = store.entry ? getStudyCard(db, store.entry.cardId) : null;
+  const time = () => now().getTime();
 
-  const badSentence = () => {
-    if (presentation.mode !== 'gap_fill') return;
-    discardExercise(db, presentation.exerciseId, now().getTime());
-    if (phase === 'question') store.useClassic(now().getTime());
+  const badExercise = () => {
+    if (!('exerciseId' in presentation)) return;
+    discardExercise(db, presentation.exerciseId, time());
+    if (phase === 'question') {
+      // A grammar card has no other way to be asked; it waits for a new drill.
+      if (presentation.mode === 'grammar_drill') store.next(time());
+      else store.useClassic(time());
+    }
     if (online) void runPrefetch(services);
   };
 
-  const onResult = (result: QuestionResult) => {
-    if (!study || !store.entry) return;
-    const time = now().getTime();
-    const responseMs = time - store.shownAt;
-    const outcome = result.kind === 'revealed' ? 'revealed' : result.grade.outcome;
-    const mode = presentation.mode;
-    const rating = ratingFor({
-      outcome,
-      usedHint: result.kind === 'graded' && result.usedHint,
-      responseMs,
-      usualMs: usualTimeFor(db, study.card.type, mode),
-      cardState: study.card.state,
-    });
-    const context =
-      presentation.mode === 'gap_fill'
-        ? { de: fillGap(presentation.exercise), en: presentation.exercise.translation }
-        : null;
-    const base: Pick<Feedback, 'outcome' | 'rating' | 'context'> = { outcome, rating, context };
-    const feedback: Feedback =
-      result.kind === 'revealed'
-        ? { ...base, expected: result.expected, given: null, slips: [], mistakes: [] }
-        : {
-            ...base,
-            expected: result.grade.expected,
-            given: result.answer,
-            slips: result.grade.slips,
-            mistakes: result.grade.mistakes,
-          };
-    const schedule = recordReview(
-      db,
-      {
-        cardId: study.card.id,
-        rating,
-        mode,
+  /** Rate each card, write its review, and move the session on. */
+  const rate = (
+    cards: {
+      cardId: number;
+      outcome: Outcome;
+      usedHint?: boolean;
+      mistakes: MistakeNote[];
+      answer: string | null;
+    }[],
+    feedback: Omit<Feedback, 'rating' | 'ratings'>,
+    mode: ExerciseMode,
+    lemma: string,
+  ) => {
+    const at = time();
+    const responseMs = at - store.shownAt;
+    const results: (AnswerResult & { label: string })[] = [];
+    // A wrong answer that is another deck word is a mix-up, whatever the spelling.
+    const spotted = new Map<MistakeNote, MistakeNote>();
+    for (const c of cards) {
+      const target = getStudyCard(db, c.cardId);
+      if (!target) continue;
+      const mistakes = spotConfusions(db, target.card.itemId, c.mistakes);
+      c.mistakes.forEach((m, i) => spotted.set(m, mistakes[i]));
+      const rating = ratingFor({
+        outcome: c.outcome,
+        usedHint: c.usedHint,
         responseMs,
-        answer: result.kind === 'graded' ? result.answer : null,
-        correct: outcome === 'correct' || outcome === 'slip',
-        mistakes: feedback.mistakes,
+        usualMs: usualTimeFor(db, target.card.type, mode),
+        cardState: target.card.state,
+      });
+      const schedule = recordReview(
+        db,
+        {
+          cardId: target.card.id,
+          rating,
+          mode,
+          responseMs,
+          answer: c.answer,
+          correct: c.outcome === 'correct' || c.outcome === 'slip',
+          mistakes,
+        },
+        at,
+      );
+      results.push({
+        cardId: target.card.id,
+        itemId: target.card.itemId,
+        type: target.card.type,
+        rating,
+        nextDue: schedule.due,
+        label: displayLemma(target.item),
+      });
+    }
+    const shown = { ...feedback, mistakes: feedback.mistakes.map((m) => spotted.get(m) ?? m) };
+    store.answered(withRatings(shown, results, store.entry?.cardId), results, lemma, at);
+  };
+
+  const onResult = (result: QuestionResult) => {
+    if (!study) return;
+    const outcome = result.kind === 'revealed' ? 'revealed' : result.grade.outcome;
+    const mistakes = result.kind === 'revealed' ? [] : result.grade.mistakes;
+    const gap = presentation.mode === 'gap_fill' ? presentation.exercise : null;
+    rate(
+      [
+        {
+          cardId: study.card.id,
+          outcome,
+          usedHint: result.kind === 'graded' && result.usedHint,
+          mistakes,
+          answer: result.kind === 'graded' ? result.answer : null,
+        },
+      ],
+      {
+        outcome,
+        expected: result.kind === 'revealed' ? result.expected : result.grade.expected,
+        given: result.kind === 'graded' ? result.answer : null,
+        slips: result.kind === 'revealed' ? [] : result.grade.slips,
+        mistakes,
+        context: gap ? { de: fillGap(gap), en: gap.translation } : null,
+        hook: outcome === 'wrong' || outcome === 'revealed' ? study.item.memoryHook : null,
       },
-      time,
+      gap ? 'gap_fill' : 'classic',
+      displayLemma(study.item),
     );
-    store.answered(feedback, schedule.due, displayLemma(study.item), time);
+  };
+
+  const onDrillDone = ({ results, answers }: DrillDone) => {
+    if (!study || presentation.mode !== 'grammar_drill') return;
+    const grade = setGrade(results);
+    rate(
+      [
+        {
+          cardId: study.card.id,
+          outcome: grade.outcome,
+          mistakes: grade.mistakes,
+          answer: answers.join(' | '),
+        },
+      ],
+      {
+        outcome: grade.outcome,
+        expected: grade.expected,
+        given: null,
+        slips: grade.slips,
+        mistakes: grade.mistakes,
+        note: presentation.drill.point,
+      },
+      'grammar_drill',
+      study.item.lemma,
+    );
+  };
+
+  const onContrastDone = ({ results, answers }: DrillDone) => {
+    if (!study || presentation.mode !== 'contrast') return;
+    const { set } = presentation;
+    const byWord = itemsByWord(set);
+    const cards = set.words.flatMap((word, w) => {
+      if (word.cardId === null) return [];
+      const grade = setGrade(byWord[w].map((i) => results[i]));
+      return [
+        {
+          cardId: word.cardId,
+          outcome: grade.outcome,
+          mistakes: grade.mistakes,
+          answer: byWord[w].map((i) => answers[i]).join(' | '),
+        },
+      ];
+    });
+    const overall = setGrade(results);
+    rate(
+      cards,
+      {
+        outcome: overall.outcome,
+        expected: overall.expected,
+        given: null,
+        slips: overall.slips,
+        mistakes: overall.mistakes,
+        note: set.explanation,
+      },
+      'contrast',
+      set.words.map((w) => w.word).join(' / '),
+    );
+  };
+
+  const revealTranslation = () => {
+    if (presentation.mode !== 'translation') return;
+    const { exercise } = presentation;
+    rate(
+      exercise.targets.map((t) => ({
+        cardId: t.cardId,
+        outcome: 'revealed' as const,
+        mistakes: [],
+        answer: null,
+      })),
+      {
+        outcome: 'revealed',
+        expected: exercise.reference,
+        given: null,
+        slips: [],
+        mistakes: [],
+        note: exercise.english,
+      },
+      'translation',
+      exercise.targets.map((t) => t.word).join(' / '),
+    );
+  };
+
+  const submitTranslation = (answer: string) => {
+    if (presentation.mode !== 'translation') return;
+    const at = time();
+    const { exercise } = presentation;
+    // Saved first, so the answer survives whatever happens to the request.
+    const id = savePendingGrade(db, {
+      exerciseId: presentation.exerciseId,
+      exercise,
+      answer,
+      responseMs: at - store.shownAt,
+      answeredAt: at,
+    });
+    setSubmitted(answer.trim());
+    if (!online) {
+      store.deferred(pendingFeedback(answer, 'You are offline.'));
+      return;
+    }
+    store.grading(id);
+    void gradeAnswer(services, id).then((outcome) => {
+      // Moved on with Grade later: the grade shows up on Home instead.
+      if (useStudyStore.getState().gradingId !== id) return;
+      if (outcome.status === 'graded') showGrade(id, outcome, answer, exercise.reference);
+      else store.deferred(pendingFeedback(answer, outcome.reason, outcome.status === 'failed'));
+    });
+  };
+
+  const showGrade = (
+    id: number,
+    outcome: Extract<GradeOutcome, { status: 'graded' }>,
+    answer: string,
+    reference: string,
+  ) => {
+    const at = time();
+    markGradesSeen(db, [id], at);
+    const results = outcome.ratings.flatMap((r) => {
+      const target = getStudyCard(db, r.cardId);
+      return target
+        ? [
+            {
+              ...r,
+              itemId: target.card.itemId,
+              type: target.card.type,
+              label: displayLemma(target.item),
+            },
+          ]
+        : [];
+    });
+    const { grade } = outcome;
+    const feedback: Omit<Feedback, 'rating' | 'ratings'> = {
+      outcome:
+        grade.verdict === 'correct' ? 'correct' : grade.verdict === 'minor' ? 'slip' : 'wrong',
+      expected: grade.corrected || reference,
+      given: answer.trim(),
+      slips: [],
+      mistakes: grade.errors.map((e) => ({
+        category: e.category,
+        yourText: e.text,
+        correction: e.correction,
+        explanation: e.explanation,
+      })),
+      translation: grade,
+    };
+    store.answered(
+      withRatings(feedback, results, store.entry?.cardId),
+      results,
+      grade.targets.map((t) => t.word).join(' / '),
+      at,
+    );
   };
 
   const { left, again } = session
@@ -166,7 +379,7 @@ export function StudyScreen() {
       options={{
         title,
         headerRight:
-          phase === 'question' || phase === 'feedback' || phase === 'intro'
+          phase === 'question' || phase === 'feedback' || phase === 'intro' || phase === 'grading'
             ? () => (
                 <Button testID="study-stop" label="Stop" variant="ghost" onPress={store.finish} />
               )
@@ -206,6 +419,12 @@ export function StudyScreen() {
           <AppText testID="summary-new">
             {plural(session?.newItemIds.length ?? 0, 'new word')}
           </AppText>
+          {session?.deferred ? (
+            <AppText testID="summary-deferred">
+              {plural(session.deferred, 'translation')} {session.deferred === 1 ? 'waits' : 'wait'}{' '}
+              for grading
+            </AppText>
+          ) : null}
         </Section>
         {store.mistakes.length ? (
           <Section title="Worth a look" testID="summary-mistakes">
@@ -237,6 +456,12 @@ export function StudyScreen() {
 
   const { card, item } = study;
   const key = `${card.id}-${store.shownAt}`;
+  const exerciseLabel =
+    presentation.mode === 'gap_fill' || presentation.mode === 'translation'
+      ? 'Bad sentence'
+      : presentation.mode === 'grammar_drill' || presentation.mode === 'contrast'
+        ? 'Bad exercise'
+        : null;
 
   return (
     <Screen
@@ -246,14 +471,24 @@ export function StudyScreen() {
     >
       {header}
       {phase === 'intro' ? (
-        <IntroCard item={item} onContinue={() => store.showQuestion(now().getTime())} />
+        <IntroCard
+          item={item}
+          note={item.kind === 'grammar' ? (getGrammarNote(db, item.id) ?? null) : null}
+          onContinue={() => store.showQuestion(now().getTime())}
+        />
+      ) : phase === 'grading' ? (
+        <GradingView
+          answer={submitted}
+          onLater={() => store.deferred(pendingFeedback(submitted, null))}
+        />
       ) : phase === 'feedback' && store.feedback ? (
         <FeedbackView
           key={key}
           feedback={store.feedback}
           item={item}
           onContinue={() => store.next(now().getTime())}
-          onBadSentence={presentation.mode === 'gap_fill' ? badSentence : undefined}
+          badLabel={store.feedback.outcome === 'pending' ? null : exerciseLabel}
+          onBadSentence={badExercise}
         />
       ) : presentation.mode === 'gap_fill' ? (
         <GapFillQuestion
@@ -262,7 +497,33 @@ export function StudyScreen() {
           exercise={presentation.exercise}
           hint={presentation.hint}
           onResult={onResult}
-          onBadSentence={badSentence}
+          onBadSentence={badExercise}
+        />
+      ) : presentation.mode === 'translation' ? (
+        <TranslationQuestion
+          key={key}
+          exercise={presentation.exercise}
+          onSubmit={submitTranslation}
+          onReveal={revealTranslation}
+          onBad={badExercise}
+        />
+      ) : presentation.mode === 'grammar_drill' ? (
+        <DrillQuestion
+          key={key}
+          label="Grammar drill"
+          title={presentation.drill.point}
+          items={presentation.drill.items}
+          onDone={onDrillDone}
+          onBad={badExercise}
+        />
+      ) : presentation.mode === 'contrast' ? (
+        <DrillQuestion
+          key={key}
+          label="Which word?"
+          title={presentation.set.words.map((w) => w.word).join(' or ')}
+          items={presentation.set.items}
+          onDone={onContrastDone}
+          onBad={badExercise}
         />
       ) : card.type === 'recognize' ? (
         <RecognizeQuestion key={key} item={item} pool={distractorPool(db)} onResult={onResult} />
@@ -281,39 +542,112 @@ export function StudyScreen() {
   );
 }
 
-/** Pick how an entry is asked, and mark a cached sentence used the moment it is shown. */
-function presentEntry(db: Db, entry: QueueEntry, now: number): Presentation {
-  if (entry.mode !== 'gap_fill') return { mode: 'classic' };
-  const study = getStudyCard(db, entry.cardId);
-  const cached = study ? nextGapExercise(db, entry.itemId) : null;
-  if (!study || !cached) return { mode: 'classic' };
-  markExerciseUsed(db, cached.id, now);
+/** The main card's rating, and one line per card when an exercise rated several. */
+function withRatings(
+  feedback: Omit<Feedback, 'rating' | 'ratings'>,
+  results: readonly (AnswerResult & { label: string })[],
+  mainCardId: number | undefined,
+): Feedback {
+  const main = results.find((r) => r.cardId === mainCardId) ?? results[0];
   return {
-    mode: 'gap_fill',
-    exerciseId: cached.id,
-    exercise: cached.payload,
-    hint: gapHint(study.card),
+    ...feedback,
+    rating: main?.rating ?? null,
+    ratings:
+      results.length > 1 ? results.map((r) => ({ label: r.label, rating: r.rating })) : undefined,
   };
+}
+
+function pendingFeedback(answer: string, reason: string | null, failed = false): Feedback {
+  return {
+    outcome: 'pending',
+    expected: failed ? 'Could not be graded' : 'Saved for grading',
+    given: answer.trim(),
+    rating: null,
+    slips: [],
+    mistakes: [],
+    note: failed
+      ? `${reason ?? 'The LLM could not grade it.'} The card comes back another time.`
+      : reason
+        ? `${reason} It gets graded once the LLM can be reached, and the card updates then.`
+        : 'It gets graded in the background. The result shows up on Home.',
+  };
+}
+
+/**
+ * Pick how an entry is asked, and mark a cached exercise used the moment
+ * it is shown. Words you mix up come as a contrast set first; then grammar
+ * cards get a drill, mature cards a translation, younger ones a gap
+ * sentence, and anything without one is a classic card.
+ */
+function presentEntry(db: Db, entry: QueueEntry, now: number): Presentation {
+  const study = getStudyCard(db, entry.cardId);
+  if (!study) return { mode: 'skip' };
+  const take = (id: number) => markExerciseUsed(db, id, now);
+
+  if (entry.type === 'apply_grammar') {
+    const drill = nextExercise(db, 'grammar_drill', entry.itemId);
+    if (!drill) return { mode: 'skip' };
+    take(drill.id);
+    return { mode: 'grammar_drill', exerciseId: drill.id, drill: drill.payload };
+  }
+  if (entry.type === 'produce' && entry.kind !== 'new_item') {
+    const contrast = nextExercise(db, 'contrast', entry.itemId);
+    if (contrast) {
+      take(contrast.id);
+      return { mode: 'contrast', exerciseId: contrast.id, set: contrast.payload };
+    }
+  }
+  if (entry.mode === 'translation') {
+    const cached = nextExercise(db, 'translation', entry.itemId);
+    if (!cached) return { mode: 'classic' };
+    take(cached.id);
+    return { mode: 'translation', exerciseId: cached.id, exercise: cached.payload };
+  }
+  if (entry.mode === 'gap_fill') {
+    const cached = nextExercise(db, 'gap_fill', entry.itemId);
+    if (!cached) return { mode: 'classic' };
+    take(cached.id);
+    return {
+      mode: 'gap_fill',
+      exerciseId: cached.id,
+      exercise: cached.payload,
+      hint: gapHint(study.card),
+    };
+  }
+  return { mode: 'classic' };
 }
 
 function FeedbackView({
   feedback,
   item,
   onContinue,
+  badLabel,
   onBadSentence,
 }: {
   feedback: Feedback;
   item: { exampleDe: string | null; exampleEn: string | null };
   onContinue: () => void;
-  onBadSentence?: () => void;
+  badLabel: string | null;
+  onBadSentence: () => void;
 }) {
   const [removed, setRemoved] = useState(false);
+  const pending = feedback.outcome === 'pending';
   const example =
-    feedback.context ?? (item.exampleDe ? { de: item.exampleDe, en: item.exampleEn } : null);
+    feedback.context ??
+    (feedback.translation || pending || feedback.note
+      ? null
+      : item.exampleDe
+        ? { de: item.exampleDe, en: item.exampleEn }
+        : null);
   const tone =
-    feedback.outcome === 'correct' ? 'good' : feedback.outcome === 'slip' ? 'okay' : 'bad';
-  const headline =
     feedback.outcome === 'correct'
+      ? 'good'
+      : feedback.outcome === 'slip' || pending
+        ? 'okay'
+        : 'bad';
+  const headline = pending
+    ? feedback.expected
+    : feedback.outcome === 'correct'
       ? 'Right!'
       : feedback.outcome === 'slip'
         ? 'Almost: a small slip'
@@ -332,20 +666,52 @@ function FeedbackView({
           <AppText variant="heading" color={color} testID="feedback-headline">
             {headline}
           </AppText>
-          <AppText variant="title" color={color} testID="feedback-expected">
-            {feedback.expected}
-          </AppText>
-          {feedback.given && feedback.outcome !== 'correct' ? (
-            <AppText color={color}>You wrote: {feedback.given}</AppText>
-          ) : null}
-          {feedback.mistakes.map((m, i) => (
-            <AppText key={i} color={color} variant="caption">
-              {m.explanation}
+          {pending ? (
+            feedback.given ? (
+              <AppText color={color} style={{ fontStyle: 'italic' }}>
+                {feedback.given}
+              </AppText>
+            ) : null
+          ) : (
+            <AppText variant="title" color={color} testID="feedback-expected">
+              {feedback.expected}
             </AppText>
-          ))}
-          <AppText color={color} variant="caption" testID="feedback-rating">
-            Rated {RATING_LABELS[feedback.rating]}
-          </AppText>
+          )}
+          {feedback.translation ? (
+            <TranslationResult grade={feedback.translation} given={feedback.given} color={color} />
+          ) : (
+            <>
+              {feedback.given && feedback.outcome !== 'correct' && !pending ? (
+                <AppText color={color}>You wrote: {feedback.given}</AppText>
+              ) : null}
+              {feedback.mistakes.map((m, i) => (
+                <AppText key={i} color={color} variant="caption">
+                  {m.explanation}
+                </AppText>
+              ))}
+            </>
+          )}
+          {feedback.note ? (
+            <AppText color={color} variant="caption" testID="feedback-note">
+              {feedback.note}
+            </AppText>
+          ) : null}
+          {feedback.hook ? (
+            <AppText color={color} variant="caption" testID="feedback-hook">
+              Memory hook: {feedback.hook}
+            </AppText>
+          ) : null}
+          {feedback.ratings ? (
+            feedback.ratings.map((r, i) => (
+              <AppText key={i} color={color} variant="caption" testID="feedback-rating">
+                {r.label}: rated {RATING_LABELS[r.rating]}
+              </AppText>
+            ))
+          ) : feedback.rating !== null ? (
+            <AppText color={color} variant="caption" testID="feedback-rating">
+              Rated {RATING_LABELS[feedback.rating]}
+            </AppText>
+          ) : null}
         </FeedbackPanel>
         {example ? (
           <View style={{ gap: 2 }} testID="feedback-example">
@@ -353,15 +719,15 @@ function FeedbackView({
             {example.en ? <AppText variant="caption">{example.en}</AppText> : null}
           </View>
         ) : null}
-        {onBadSentence && removed ? (
+        {badLabel && removed ? (
           <AppText variant="caption" testID="gap-removed">
-            Sentence removed. A new one gets written next time.
+            Removed. A new one gets written next time.
           </AppText>
-        ) : onBadSentence ? (
+        ) : badLabel ? (
           <Button
             testID="gap-bad"
             variant="ghost"
-            label="Bad sentence"
+            label={badLabel}
             onPress={() => {
               onBadSentence();
               setRemoved(true);

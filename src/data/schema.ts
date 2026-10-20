@@ -22,8 +22,10 @@ import {
   SUGGESTION_STATUSES,
   type Example,
   type ChatMessage,
+  type MistakeCategory,
 } from '../core/model';
 import type { DraftFields, DraftFlag } from '../core/drafts';
+import type { TranslationExercise, TranslationGrade } from '../core/translation';
 
 export interface SuggestionDetails {
   fields: DraftFields;
@@ -80,6 +82,8 @@ export const item = sqliteTable(
     source: text('source', { enum: ITEM_SOURCES }).notNull().default('user'),
     status: text('status', { enum: ITEM_STATUSES }).notNull().default('active'),
     notes: text('notes'),
+    /** A mnemonic the LLM wrote once the item's card became a leech. */
+    memoryHook: text('memory_hook'),
     createdAt: integer('created_at').notNull().$defaultFn(now),
     updatedAt: integer('updated_at').notNull().$defaultFn(now),
   },
@@ -99,6 +103,11 @@ export const grammarNote = sqliteTable('grammar_note', {
   ruleSummary: text('rule_summary').notNull(),
   examples: text('examples', { mode: 'json' })
     .$type<Example[]>()
+    .notNull()
+    .default(sql`'[]'`),
+  /** The mistake categories this rule is about, so weak spots can pull it forward. */
+  categories: text('categories', { mode: 'json' })
+    .$type<MistakeCategory[]>()
     .notNull()
     .default(sql`'[]'`),
 });
@@ -122,6 +131,8 @@ export const card = sqliteTable(
     lapses: integer('lapses').notNull().default(0),
     lastReview: integer('last_review'),
     suspended: integer('suspended', { mode: 'boolean' }).notNull().default(false),
+    /** When the card was last flagged as a leech; null once you dealt with it. */
+    leechAt: integer('leech_at'),
     createdAt: integer('created_at').notNull().$defaultFn(now),
   },
   (t) => [
@@ -161,6 +172,10 @@ export const mistake = sqliteTable(
     yourText: text('your_text').notNull(),
     correction: text('correction').notNull(),
     explanation: text('explanation'),
+    /** The deck item your wrong answer actually was: stehen typed for stellen. */
+    confusedItemId: integer('confused_item_id').references((): AnySQLiteColumn => item.id, {
+      onDelete: 'set null',
+    }),
     createdAt: integer('created_at').notNull().$defaultFn(now),
   },
   (t) => [index('mistake_item_idx').on(t.itemId), index('mistake_category_idx').on(t.category)],
@@ -185,6 +200,34 @@ export const exercise = sqliteTable(
     discarded: integer('discarded', { mode: 'boolean' }).notNull().default(false),
   },
   (t) => [index('exercise_mode_used_idx').on(t.mode, t.usedAt)],
+);
+
+export const PENDING_GRADE_STATUSES = ['pending', 'graded', 'failed'] as const;
+
+/**
+ * Translations waiting for the LLM to grade them. The answer is saved the
+ * moment you give it; the cards' schedules update once it is graded.
+ */
+export const pendingGrade = sqliteTable(
+  'pending_grade',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    exerciseId: integer('exercise_id').references(() => exercise.id, { onDelete: 'set null' }),
+    /** The exercise as shown, so grading never depends on the cache. */
+    exercise: text('exercise', { mode: 'json' }).$type<TranslationExercise>().notNull(),
+    answer: text('answer').notNull(),
+    responseMs: integer('response_ms'),
+    answeredAt: integer('answered_at').notNull(),
+    status: text('status', { enum: PENDING_GRADE_STATUSES }).notNull().default('pending'),
+    /** Failed attempts with an unusable reply; it gives up after a few. */
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    result: text('result', { mode: 'json' }).$type<TranslationGrade>(),
+    gradedAt: integer('graded_at'),
+    /** When you saw the feedback, in the session or in the graded list. */
+    seenAt: integer('seen_at'),
+  },
+  (t) => [index('pending_grade_status_idx').on(t.status)],
 );
 
 export const suggestion = sqliteTable(
@@ -258,6 +301,7 @@ export type NewCardRow = typeof card.$inferInsert;
 export type ReviewRow = typeof review.$inferSelect;
 export type MistakeRow = typeof mistake.$inferSelect;
 export type ExerciseRow = typeof exercise.$inferSelect;
+export type PendingGradeRow = typeof pendingGrade.$inferSelect;
 export type SuggestionRow = typeof suggestion.$inferSelect;
 export type StudySessionRow = typeof studySession.$inferSelect;
 export type ChatRow = typeof chat.$inferSelect;

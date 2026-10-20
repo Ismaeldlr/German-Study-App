@@ -18,6 +18,7 @@ const MODE_LABELS: Record<string, string> = {
   gap_fill: 'Gap sentences',
   translation: 'Translations',
   grammar_drill: 'Grammar drills',
+  contrast: 'Contrast sets',
   story: 'Stories',
   chat: 'Chats',
   classic: 'Classic',
@@ -128,7 +129,12 @@ export function UsageScreen() {
 
 function describeTopUp(report: PrefetchReport): string {
   const parts: string[] = [];
+  if (report.graded) parts.push(`${plural(report.graded, 'translation')} graded`);
   if (report.generated) parts.push(plural(report.generated, 'new sentence'));
+  if (report.translations) parts.push(plural(report.translations, 'new translation'));
+  if (report.drills) parts.push(plural(report.drills, 'grammar drill'));
+  if (report.contrasts) parts.push(plural(report.contrasts, 'contrast set'));
+  if (report.hooks) parts.push(plural(report.hooks, 'memory hook'));
   if (report.rejected) parts.push(`${report.rejected} rejected`);
   if (report.suggestions) parts.push(plural(report.suggestions, 'suggestion'));
   if (report.stoppedBy) {

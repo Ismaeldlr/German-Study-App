@@ -1,9 +1,12 @@
 import { act, fireEvent, screen } from '@testing-library/react-native';
 import { router } from 'expo-router';
+import { eq } from 'drizzle-orm';
 import { Alert } from 'react-native';
 
 import { createChapter, listChapters } from '@/data/repos/chapters';
 import { createItem } from '@/data/repos/items';
+import { recordReview } from '@/data/repos/study';
+import { card } from '@/data/schema';
 import { getSetting, setSetting } from '@/data/repos/settings';
 import { recordUsage } from '@/data/repos/usage';
 import { itemInput } from '@/data/testing/fixtures';
@@ -50,6 +53,40 @@ describe('Home screen', () => {
 
     await act(() => setSetting(services.db, 'data.lastExportAt', services.now().getTime()));
     expect(screen.queryByTestId('export-nudge')).not.toBeOnTheScreen();
+  });
+});
+
+describe('Home screen: production and weak spots', () => {
+  it('shows your top weak spots and the cards that keep slipping', async () => {
+    const services = await createTestServices();
+    const id = createItem(services.db, itemInput(), 1);
+    const [first, second] = services.db.select().from(card).where(eq(card.itemId, id)).all();
+    for (const c of [first, second]) {
+      recordReview(
+        services.db,
+        {
+          cardId: c.id,
+          rating: 1,
+          mode: 'gap_fill',
+          responseMs: 1000,
+          answer: 'den',
+          correct: false,
+          mistakes: [
+            { category: 'case_ending', yourText: 'den', correction: 'dem', explanation: 'dative' },
+          ],
+        },
+        services.now().getTime(),
+      );
+    }
+    services.db.update(card).set({ leechAt: 1 }).where(eq(card.id, first.id)).run();
+    await renderWithServices(<HomeScreen />, services);
+
+    expect(screen.getByTestId('home-weak-spots')).toHaveTextContent(/Case endings.*2 mistakes/);
+    await fireEvent.press(screen.getByRole('button', { name: 'See all' }));
+    expect(router.push).toHaveBeenCalledWith('/weak-spots');
+    expect(screen.getByTestId('leeches-banner')).toHaveTextContent(/1 card keeps slipping/);
+    await fireEvent.press(screen.getByRole('button', { name: 'Look at them' }));
+    expect(router.push).toHaveBeenCalledWith('/leeches');
   });
 });
 

@@ -1,7 +1,8 @@
-import { and, desc, eq, gte, lt, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, lt, ne, notInArray, sql } from 'drizzle-orm';
 
-import { CardState } from '@/core/cards';
+import { CardState, displayLemma } from '@/core/cards';
 import type { MistakeNote } from '@/core/grading';
+import { confusedWith, isLeechLapse } from '@/core/leeches';
 import type { CardType, ExerciseMode } from '@/core/model';
 import { newItemAllowance, RECALL_WINDOW_DAYS } from '@/core/planner';
 import { buildQueue, SIBLING_CAP, type QueueCandidate, type QueueEntry } from '@/core/queue';
@@ -11,8 +12,22 @@ import { DAY_MS, startOfLocalDay } from '@/core/time';
 
 import { notifyChange } from '../changes';
 import type { DbOrTx } from '../db';
-import { card, item, mistake, review, studySession, type CardRow, type ItemRow } from '../schema';
+import {
+  card,
+  item,
+  mistake,
+  pendingGrade,
+  review,
+  studySession,
+  type CardRow,
+  type ItemRow,
+} from '../schema';
+import { coverage } from './exercises';
 import { getAllSettings } from './settings';
+import { pullForwardGrammar } from './weak-spots';
+
+/** A new item's first card: recognition for a word, the drill for a grammar point. */
+const FIRST_CARD_TYPES: CardType[] = ['recognize', 'apply_grammar'];
 
 /** Active cards of active items, as the planner sees them. */
 export function queueCandidates(db: DbOrTx): QueueCandidate[] {
@@ -49,7 +64,7 @@ export function newItemsIntroducedToday(db: DbOrTx, now: Date): number {
     .select({ itemId: card.itemId, first: sql<number>`min(${review.reviewedAt})` })
     .from(review)
     .innerJoin(card, eq(review.cardId, card.id))
-    .where(eq(card.type, 'recognize'))
+    .where(inArray(card.type, FIRST_CARD_TYPES))
     .groupBy(card.itemId)
     .having(gte(sql`min(${review.reviewedAt})`, startOfLocalDay(now)))
     .all();
@@ -62,7 +77,7 @@ export function newSiblingCardsToday(db: DbOrTx, now: Date): number {
     .select({ cardId: card.id })
     .from(review)
     .innerJoin(card, eq(review.cardId, card.id))
-    .where(ne(card.type, 'recognize'))
+    .where(notInArray(card.type, FIRST_CARD_TYPES))
     .groupBy(card.id)
     .having(gte(sql`min(${review.reviewedAt})`, startOfLocalDay(now)))
     .all().length;
@@ -100,9 +115,20 @@ export function dailyAllowance(
   });
 }
 
+/** Cards with a translation waiting to be graded. */
+export function waitingCardIds(db: DbOrTx): Set<number> {
+  const rows = db
+    .select({ exercise: pendingGrade.exercise })
+    .from(pendingGrade)
+    .where(eq(pendingGrade.status, 'pending'))
+    .all();
+  return new Set(rows.flatMap((r) => r.exercise.targets.map((t) => t.cardId)));
+}
+
 /**
  * Today's queue. Both daily limits count what was already done today, so a
- * second session the same day does not reset them.
+ * second session the same day does not reset them. Grammar cards come only
+ * with a drill ready, and cards with an answer waiting to be graded wait too.
  */
 export function todayQueue(db: DbOrTx, now: Date): QueueEntry[] {
   const candidates = queueCandidates(db);
@@ -111,6 +137,9 @@ export function todayQueue(db: DbOrTx, now: Date): QueueEntry[] {
     newItemsAllowance: dailyAllowance(db, now, candidates) - newItemsIntroducedToday(db, now),
     unlockedItemIds: unlockedItemIds(db, now),
     siblingCap: SIBLING_CAP - newSiblingCardsToday(db, now),
+    drillReady: new Set(coverage(db, 'grammar_drill').keys()),
+    pullForward: pullForwardGrammar(db, now),
+    excludeCardIds: waitingCardIds(db),
   });
 }
 
@@ -129,12 +158,12 @@ export function getStudyCard(db: DbOrTx, cardId: number): StudyCard | null {
   return row ?? null;
 }
 
-/** Items to draw multiple-choice distractors from. */
+/** Words to draw multiple-choice distractors from. A grammar point's label would give it away. */
 export function distractorPool(db: DbOrTx) {
   return db
     .select({ id: item.id, kind: item.kind, meanings: item.meanings })
     .from(item)
-    .where(eq(item.status, 'active'))
+    .where(and(eq(item.status, 'active'), ne(item.kind, 'grammar')))
     .all();
 }
 
@@ -163,7 +192,9 @@ export interface ReviewInput {
 
 /**
  * Grade a card: update its FSRS state and log the review (and any mistakes)
- * in a single transaction, written the moment you answer.
+ * in a single transaction, written the moment you answer. A lapse that
+ * makes the card a leech flags it, and a wrong word that is another deck
+ * word is logged as a confusion between the two.
  */
 export function recordReview(db: DbOrTx, input: ReviewInput, now: number): CardSchedule {
   const targetRecall = getAllSettings(db)['study.targetRecall'];
@@ -172,7 +203,11 @@ export function recordReview(db: DbOrTx, input: ReviewInput, now: number): CardS
     const current = tx.select().from(card).where(eq(card.id, input.cardId)).get();
     if (!current) throw new Error(`Card ${input.cardId} not found`);
     const schedule = scheduler.review(current, input.rating, now);
-    tx.update(card).set(schedule).where(eq(card.id, current.id)).run();
+    const leech = schedule.lapses > current.lapses && isLeechLapse(schedule.lapses);
+    tx.update(card)
+      .set({ ...schedule, ...(leech ? { leechAt: now } : {}) })
+      .where(eq(card.id, current.id))
+      .run();
     const [logged] = tx
       .insert(review)
       .values({
@@ -196,6 +231,12 @@ export function recordReview(db: DbOrTx, input: ReviewInput, now: number): CardS
           yourText: note.yourText,
           correction: note.correction,
           explanation: note.explanation,
+          confusedItemId:
+            note.confusedItemId !== undefined
+              ? note.confusedItemId
+              : note.category === 'wrong_word'
+                ? lookUpConfusion(tx, current.itemId, note.yourText)
+                : null,
           createdAt: now,
         })
         .run();
@@ -204,6 +245,53 @@ export function recordReview(db: DbOrTx, input: ReviewInput, now: number): CardS
   });
   notifyChange('card', 'review', 'mistake');
   return next;
+}
+
+/** The deck word a wrong answer is, if any. */
+function lookUpConfusion(db: DbOrTx, itemId: number, given: string): number | null {
+  const words = activeWords(db);
+  const target = words.find((w) => w.id === itemId);
+  return target ? confusedWith(given, target, words) : null;
+}
+
+const activeWords = (db: DbOrTx) =>
+  db
+    .select()
+    .from(item)
+    .where(eq(item.status, 'active'))
+    .all()
+    .filter((w) => w.kind !== 'grammar');
+
+/**
+ * Spot wrong answers that are another deck word, before the feedback is
+ * shown. "stehen" for stellen or "liegen" for legen is only a letter or two
+ * away, but it is a mix-up of two words, not a spelling slip, and it is
+ * logged as one so the pair gets contrast exercises.
+ */
+export function spotConfusions(
+  db: DbOrTx,
+  itemId: number,
+  mistakes: readonly MistakeNote[],
+): MistakeNote[] {
+  const open = mistakes.filter(
+    (m) =>
+      m.confusedItemId === undefined && (m.category === 'wrong_word' || m.category === 'spelling'),
+  );
+  if (open.length === 0) return [...mistakes];
+  const words = activeWords(db);
+  const target = words.find((w) => w.id === itemId);
+  return mistakes.map((m) => {
+    if (!open.includes(m)) return m;
+    const id = target ? confusedWith(m.yourText, target, words) : null;
+    const other = id === null ? undefined : words.find((w) => w.id === id);
+    if (!other) return { ...m, confusedItemId: null };
+    return {
+      ...m,
+      category: 'wrong_word',
+      confusedItemId: other.id,
+      explanation: `${displayLemma(other)} is another word (${other.meanings[0] ?? '…'}). Here it is ${m.correction}.`,
+    };
+  });
 }
 
 export function startStudySession(db: DbOrTx, now: number): number {

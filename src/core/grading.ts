@@ -15,6 +15,8 @@ export interface MistakeNote {
   yourText: string;
   correction: string;
   explanation: string;
+  /** The deck item the wrong answer was, when known. Left out, it is looked up. */
+  confusedItemId?: number | null;
 }
 
 export interface CardGrade {

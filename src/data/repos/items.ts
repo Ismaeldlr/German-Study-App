@@ -62,7 +62,7 @@ export function createItems(db: DbOrTx, inputs: readonly ItemInput[], now: numbe
   return ids;
 }
 
-function insertItemWithCards(db: DbOrTx, input: ItemInput, now: number): number {
+export function insertItemWithCards(db: DbOrTx, input: ItemInput, now: number): number {
   const clean = cleanInput(input);
   const [row] = db
     .insert(item)

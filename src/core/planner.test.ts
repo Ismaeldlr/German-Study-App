@@ -63,7 +63,7 @@ describe('at-risk cards', () => {
 });
 
 describe('practice mode by maturity', () => {
-  it('puts learning and young production cards in gap fill', () => {
+  it('puts learning and young production cards in gap fill, mature ones in translation', () => {
     expect(practiceMode({ type: 'produce', state: CardState.New, stability: 0 })).toBe('gap_fill');
     expect(practiceMode({ type: 'produce', state: CardState.Learning, stability: 1 })).toBe(
       'gap_fill',
@@ -72,10 +72,13 @@ describe('practice mode by maturity', () => {
       'gap_fill',
     );
     expect(practiceMode({ type: 'produce', state: CardState.Review, stability: 21 })).toBe(
-      'classic',
+      'translation',
     );
     expect(practiceMode({ type: 'gender', state: CardState.Learning, stability: 1 })).toBe(
       'classic',
+    );
+    expect(practiceMode({ type: 'apply_grammar', state: CardState.New, stability: 0 })).toBe(
+      'grammar_drill',
     );
   });
 });

@@ -304,4 +304,225 @@ const suggestWords = {
   },
 };
 
-module.exports = { handlers: [enrichWords, genGapBatch, suggestWords] };
+function firstUser(body) {
+  return body.messages.find((m) => m.role === 'user')?.content ?? '';
+}
+
+/** "die Wohnung" -> "Wohnung", "sich freuen auf" -> "freuen". */
+function bareWord(word, type) {
+  const bare = word.replace(/^(der|die|das)\s+/, '').replace(/^sich\s+/, '');
+  return type === 'verb' ? bare.split(/\s+/)[0] : bare;
+}
+
+const GRAMMAR_CATEGORIES = [
+  [/adjektiv|adjective/i, 'adjective_ending'],
+  [/perfekt|präteritum|verb|konjunktiv|modal/i, 'verb_form'],
+  [/weil|dass|nebensatz|wortstellung|word order/i, 'word_order'],
+  [/artikel|article/i, 'article'],
+];
+
+const describeGrammar = {
+  task: 'describe_grammar',
+  respond(_lastUser, body) {
+    const { point } = JSON.parse(firstUser(body));
+    const category = GRAMMAR_CATEGORIES.find(([re]) => re.test(point))?.[1] ?? 'case_ending';
+    return JSON.stringify({
+      name: point.trim(),
+      label: `the rule "${point.trim()}"`,
+      summary: `${point.trim()}: a rule you practise in class. Look at the examples for the pattern.`,
+      examples: [
+        { de: 'Ich fahre mit dem Bus.', en: 'I go by bus.' },
+        { de: 'Wir wohnen bei meinen Eltern.', en: 'We live with my parents.' },
+        { de: 'Sie kommt von der Arbeit.', en: 'She is coming from work.' },
+      ],
+      categories: [category],
+    });
+  },
+};
+
+const DRILL_POOL = [
+  ['Ich fahre mit ___ Bus zur Arbeit.', 'der Bus', 'dem', 'I go to work by bus.'],
+  ['Wir wohnen bei ___ Eltern.', 'meine Eltern', 'meinen', 'We live with my parents.'],
+  ['Sie kommt gerade von ___ Arbeit.', 'die Arbeit', 'der', 'She is just coming from work.'],
+  [
+    'Er spricht oft mit ___ Nachbarin.',
+    'seine Nachbarin',
+    'seiner',
+    'He often talks to his neighbour.',
+  ],
+  ['Nach ___ Kurs gehen wir essen.', 'der Kurs', 'dem', 'After the course we go to eat.'],
+  ['Das Geschenk ist von ___ Bruder.', 'mein Bruder', 'meinem', 'The present is from my brother.'],
+  ['Wir treffen uns bei ___ Freundin.', 'eine Freundin', 'einer', 'We meet at a friend’s place.'],
+  [
+    'Seit ___ Jahr lerne ich Deutsch.',
+    'ein Jahr',
+    'einem',
+    'I have been learning German for a year.',
+  ],
+  [
+    'Ich gehe mit ___ Kindern in den Park.',
+    'die Kinder',
+    'den',
+    'I go to the park with the children.',
+  ],
+  ['Aus ___ Küche riecht es gut.', 'die Küche', 'der', 'It smells good from the kitchen.'],
+];
+let drillCounter = 0;
+
+const genGrammarDrill = {
+  task: 'gen_grammar_drill',
+  respond(_lastUser, body) {
+    const input = JSON.parse(firstUser(body));
+    const start = drillCounter++ * 5;
+    const items = Array.from({ length: 5 }, (_, i) => {
+      const [sentence, hint, answer, translation] = DRILL_POOL[(start + i) % DRILL_POOL.length];
+      return {
+        sentence,
+        hint,
+        answer,
+        accepted: [],
+        translation,
+        explanation: `${input.point}: ${hint} becomes ${answer} ${hint.split(' ').slice(1).join(' ')}.`,
+        category: input.categories[0] ?? 'case_ending',
+      };
+    });
+    return JSON.stringify({ items });
+  },
+};
+
+function translationClause(target) {
+  const bare = bareWord(target.word, target.type);
+  if (target.type === 'noun') {
+    const article = /^(der|die|das)\s+/.exec(target.word)?.[1];
+    return {
+      de: `ich mag ${article ? ACCUSATIVE[article] + ' ' : ''}${bare}`,
+      en: `I like the ${target.meaning}`,
+    };
+  }
+  if (target.type === 'verb') return { de: `wir möchten ${bare}`, en: `we want ${target.meaning}` };
+  return { de: `das ist ${bare}`, en: `that is ${target.meaning}` };
+}
+
+const genTranslation = {
+  task: 'gen_translation',
+  respond(_lastUser, body) {
+    const first = firstUser(body);
+    const items = JSON.parse(first.slice(first.indexOf('[')));
+    return JSON.stringify({
+      items: items.map((item) => {
+        const clauses = item.targets.map(translationClause);
+        return {
+          id: item.id,
+          english: `${cap(clauses.map((c) => c.en).join(', and '))}.`,
+          reference: `${cap(clauses.map((c) => c.de).join(' und '))}.`,
+          cues: item.targets.map((t) => t.meaning),
+        };
+      }),
+    });
+  },
+};
+
+function words(text) {
+  return text
+    .toLowerCase()
+    .replace(/[.,!?;:"„“]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+const gradeTranslation = {
+  task: 'grade_translation',
+  respond(_lastUser, body) {
+    const input = JSON.parse(firstUser(body));
+    const given = words(input.answer);
+    const reference = words(input.reference);
+    const same = given.join(' ') === reference.join(' ');
+    const targets = input.targets.map((t) => {
+      const type = /^(der|die|das)\s/.test(t.word) ? 'noun' : /^to /.test(t.meaning) ? 'verb' : '';
+      const bare = bareWord(t.word, type).toLowerCase();
+      return { word: t.word, verdict: given.includes(bare) ? 'correct' : 'missing' };
+    });
+    const reordered = !same && [...given].sort().join(' ') === [...reference].sort().join(' ');
+    const errors = same
+      ? []
+      : [
+          {
+            category: reordered ? 'word_order' : 'wrong_word',
+            text: input.answer.trim(),
+            correction: input.reference,
+            explanation: reordered
+              ? 'The verb goes in second position.'
+              : 'Compare your sentence with the correction.',
+            word: null,
+          },
+        ];
+    return JSON.stringify({
+      verdict: same ? 'correct' : 'wrong',
+      targets,
+      errors,
+      corrected: same ? input.answer.trim() : input.reference,
+      natural: input.reference,
+      explanation: same ? 'Well done, that is correct.' : 'Not quite: see the correction.',
+    });
+  },
+};
+
+const CONTRAST_TEMPLATES = {
+  verb: ['Wir möchten am Wochenende ___.', 'Ich kann das heute nicht ___.', 'Morgen will sie ___.'],
+  noun: ['Wo ist ___ denn?', 'Ich brauche ___ heute.', 'Für mich ist ___ wichtig.'],
+  other: ['Das finde ich ___.', 'Er sagt nur: ___.', 'Es ist wirklich ___.'],
+};
+
+const genContrast = {
+  task: 'gen_contrast',
+  respond(_lastUser, body) {
+    const input = JSON.parse(firstUser(body));
+    const items = Array.from({ length: 6 }, (_, i) => {
+      const index = i % 2;
+      const word = input.words[index];
+      const type = word.type in CONTRAST_TEMPLATES ? word.type : 'other';
+      const sentence = CONTRAST_TEMPLATES[type][Math.floor(i / 2)];
+      const answer = type === 'noun' ? word.word : bareWord(word.word, type);
+      return {
+        word: index,
+        sentence,
+        hint: word.meaning,
+        answer,
+        accepted: [],
+        translation: `(${input.topic}) A sentence with "${word.meaning}".`,
+        explanation: `Here it means "${word.meaning}", so ${answer}.`,
+      };
+    });
+    return JSON.stringify({
+      explanation: `${input.words[0].word} means ${input.words[0].meaning}; ${input.words[1].word} means ${input.words[1].meaning}.`,
+      items,
+    });
+  },
+};
+
+const leechHelp = {
+  task: 'leech_help',
+  respond(_lastUser, body) {
+    const input = JSON.parse(firstUser(body));
+    return JSON.stringify({
+      hook: `Picture ${input.word} written in huge red letters next to "${input.meanings[0]}".`,
+      partner: input.confusedWith
+        ? { word: input.confusedWith, meaning: '(the other word)' }
+        : null,
+    });
+  },
+};
+
+module.exports = {
+  handlers: [
+    enrichWords,
+    genGapBatch,
+    suggestWords,
+    describeGrammar,
+    genGrammarDrill,
+    genTranslation,
+    gradeTranslation,
+    genContrast,
+    leechHelp,
+  ],
+};

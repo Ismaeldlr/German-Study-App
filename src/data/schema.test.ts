@@ -16,6 +16,8 @@ const SPEC_TABLES = [
   'chat',
   'llm_usage',
   'settings',
+  // Not a table in the spec's list, but the spec's pending-grading queue.
+  'pending_grade',
 ];
 
 describe('first migration', () => {

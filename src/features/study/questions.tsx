@@ -10,7 +10,7 @@ import {
   gradeVerbForms,
   type CardGrade,
 } from '@/core/grading';
-import type { Article } from '@/core/model';
+import type { Article, Example } from '@/core/model';
 import type { ItemRow } from '@/data/schema';
 import { AppText } from '@/ui/AppText';
 import { Button } from '@/ui/Button';
@@ -54,7 +54,50 @@ function Prompt({ label, text, sub }: { label: string; text: string; sub?: strin
   );
 }
 
-export function IntroCard({ item, onContinue }: { item: ItemRow; onContinue: () => void }) {
+export function IntroCard({
+  item,
+  note,
+  onContinue,
+}: {
+  item: ItemRow;
+  /** A grammar point's rule and examples. */
+  note?: { ruleSummary: string; examples: Example[] } | null;
+  onContinue: () => void;
+}) {
+  if (item.kind === 'grammar') {
+    return (
+      <QuestionLayout
+        prompt={
+          <View style={{ alignItems: 'center', gap: spacing.sm }} testID="study-intro">
+            <AppText variant="caption">New grammar point</AppText>
+            <AppText variant="title" style={{ textAlign: 'center' }}>
+              {item.lemma}
+            </AppText>
+            {item.meanings[0] ? (
+              <AppText variant="caption" style={{ textAlign: 'center' }}>
+                {item.meanings[0]}
+              </AppText>
+            ) : null}
+            {note?.ruleSummary ? (
+              <AppText style={{ textAlign: 'center' }}>{note.ruleSummary}</AppText>
+            ) : null}
+            {(note?.examples ?? []).map((e, i) => (
+              <View key={i} style={{ alignItems: 'center' }}>
+                <AppText style={{ textAlign: 'center', fontStyle: 'italic' }}>{e.de}</AppText>
+                {e.en ? (
+                  <AppText variant="caption" style={{ textAlign: 'center' }}>
+                    {e.en}
+                  </AppText>
+                ) : null}
+              </View>
+            ))}
+          </View>
+        }
+      >
+        <Button testID="study-intro-continue" size="large" label="Try it" onPress={onContinue} />
+      </QuestionLayout>
+    );
+  }
   return (
     <QuestionLayout
       prompt={
@@ -173,6 +216,8 @@ export function RecognizeQuestion({
                           yourText: option.text,
                           correction: expected,
                           explanation: `${displayLemma(item)} means ${expected}.`,
+                          // The meaning you picked belongs to this word.
+                          confusedItemId: option.itemId,
                         },
                       ],
                     },

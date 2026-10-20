@@ -22,6 +22,8 @@ export interface SessionState {
   timeUp: boolean;
   /** Where the card in hand came from: first showing, or back from a learning step. */
   source: 'queue' | 'learning' | null;
+  /** Answers saved for grading later; their cards update once graded. */
+  deferred: number;
 }
 
 export function startSession(
@@ -37,6 +39,7 @@ export function startSession(
     deadline,
     timeUp: false,
     source: null,
+    deferred: 0,
   };
 }
 
@@ -86,6 +89,26 @@ export function recordAnswer(
     ];
   }
   return next;
+}
+
+/** An answer that waits for the LLM: no rating yet, so nothing comes back this session. */
+export function deferAnswer(state: SessionState): SessionState {
+  return { ...state, deferred: state.deferred + 1 };
+}
+
+/**
+ * Take cards out of the rest of the session. An exercise that rated
+ * several cards at once (a translation, a contrast set) already reviewed
+ * them, so they should not come up again on their own.
+ */
+export function dropCards(state: SessionState, cardIds: readonly number[]): SessionState {
+  if (cardIds.length === 0) return state;
+  const drop = new Set(cardIds);
+  return {
+    ...state,
+    queue: state.queue.filter((e) => !drop.has(e.cardId)),
+    learning: state.learning.filter((l) => !drop.has(l.entry.cardId)),
+  };
 }
 
 export function remaining(state: SessionState): number {
