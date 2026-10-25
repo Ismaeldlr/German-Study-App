@@ -1,13 +1,14 @@
 import { router, Stack } from 'expo-router';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useEffect, useState } from 'react';
-import { ScrollView, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { displayLemma } from '@/core/cards';
 import { itemsByWord, setGrade } from '@/core/drills';
-import { plural } from '@/core/format';
 import { fillGap, gapHint } from '@/core/gap-fill';
 import type { MistakeNote } from '@/core/grading';
 import type { ExerciseMode } from '@/core/model';
+import { praiseFor, xpFor } from '@/core/progress';
 import type { QueueEntry } from '@/core/queue';
 import { ratingFor, type Outcome } from '@/core/rating';
 import { accuracy, progress } from '@/core/session';
@@ -16,6 +17,7 @@ import type { Db } from '@/data/db';
 import { discardExercise, markExerciseUsed, nextExercise } from '@/data/repos/exercises';
 import { getGrammarNote } from '@/data/repos/grammar';
 import { markGradesSeen, savePendingGrade } from '@/data/repos/grading';
+import { progressReport, unlockedIds } from '@/data/repos/progress';
 import { getSetting } from '@/data/repos/settings';
 import {
   distractorPool,
@@ -31,10 +33,13 @@ import { gradeAnswer, type GradeOutcome } from '@/jobs/grading';
 import { runPrefetch } from '@/jobs/prefetch';
 import { AppText } from '@/ui/AppText';
 import { Button } from '@/ui/Button';
-import { ListItem } from '@/ui/controls';
-import { Screen, Section } from '@/ui/layout';
+import { haptics } from '@/ui/haptics';
+import { Screen } from '@/ui/layout';
+import { FadeIn } from '@/ui/motion';
+import { radius, spacing, useTheme } from '@/ui/theme';
 import { UmlautBar } from '@/ui/umlaut';
 
+import { syncReminders } from '../reminders';
 import { useServices } from '../services';
 import { useOnline } from '../use-online';
 import { RATING_LABELS } from '../words/describe';
@@ -47,6 +52,7 @@ import {
   type DrillDone,
 } from './production';
 import {
+  ExampleBlock,
   FeedbackPanel,
   GenderQuestion,
   IntroCard,
@@ -56,7 +62,15 @@ import {
   VerbFormsQuestion,
   type QuestionResult,
 } from './questions';
-import { useStudyStore, type AnswerResult, type Feedback, type Presentation } from './store';
+import { SessionHud } from './SessionHud';
+import { SessionSummary } from './SessionSummary';
+import {
+  useStudyStore,
+  type AnswerResult,
+  type Baseline,
+  type Feedback,
+  type Presentation,
+} from './store';
 
 /**
  * The Study session. A warm-up of classic cards, production cards in
@@ -87,6 +101,7 @@ export function StudyScreen() {
     state.begin(startStudySession(db, time), queue, time, {
       deadline: time + getSetting(db, 'study.sessionMinutes') * 60_000,
       present: (entry) => presentEntry(db, entry, now().getTime()),
+      baseline: baselineFor(db, now()),
     });
   }, [db, now]);
 
@@ -104,6 +119,8 @@ export function StudyScreen() {
         },
         now().getTime(),
       );
+      // Once today counts toward the streak, today's reminder is dropped.
+      void syncReminders(db, now());
     }
   }, [phase, sessionId, session, db, now]);
 
@@ -180,7 +197,11 @@ export function StudyScreen() {
         label: displayLemma(target.item),
       });
     }
-    const shown = { ...feedback, mistakes: feedback.mistakes.map((m) => spotted.get(m) ?? m) };
+    const shown = {
+      ...feedback,
+      mistakes: feedback.mistakes.map((m) => spotted.get(m) ?? m),
+      xp: results.reduce((sum, r) => sum + xpFor(mode, r.rating), 0),
+    };
     store.answered(withRatings(shown, results, store.entry?.cardId), results, lemma, at);
   };
 
@@ -354,6 +375,7 @@ export function StudyScreen() {
         explanation: e.explanation,
       })),
       translation: grade,
+      xp: results.reduce((sum, r) => sum + xpFor('translation', r.rating), 0),
     };
     store.answered(
       withRatings(feedback, results, store.entry?.cardId),
@@ -392,61 +414,34 @@ export function StudyScreen() {
     return (
       <Screen testID="study-empty">
         {header}
-        <AppText variant="heading">Nothing to study right now.</AppText>
-        <AppText>New cards and reviews show up here when they are due.</AppText>
+        <View style={styles.empty}>
+          <Text style={styles.emptyIcon}>🎉</Text>
+          <AppText variant="heading" style={{ textAlign: 'center' }}>
+            Nothing to study right now.
+          </AppText>
+          <AppText style={{ textAlign: 'center' }}>
+            New cards and reviews show up here when they are due.
+          </AppText>
+        </View>
         <Button label="Back" variant="secondary" onPress={() => router.back()} />
       </Screen>
     );
   }
 
   if (phase === 'done') {
-    const recall = session ? accuracy(session) : null;
     return (
-      <Screen testID="study-summary">
-        {header}
-        <AppText variant="title">Session done</AppText>
-        {session?.timeUp ? (
-          <AppText testID="summary-time-up">
-            That was your {plural(getSetting(db, 'study.sessionMinutes'), 'minute')}. The rest waits
-            for next time.
-          </AppText>
-        ) : null}
-        <Section>
-          <AppText testID="summary-cards">{plural(session?.answered ?? 0, 'card')} done</AppText>
-          <AppText testID="summary-recall">
-            Recall: {recall === null ? '–' : `${Math.round(recall * 100)}%`}
-          </AppText>
-          <AppText testID="summary-new">
-            {plural(session?.newItemIds.length ?? 0, 'new word')}
-          </AppText>
-          {session?.deferred ? (
-            <AppText testID="summary-deferred">
-              {plural(session.deferred, 'translation')} {session.deferred === 1 ? 'waits' : 'wait'}{' '}
-              for grading
-            </AppText>
-          ) : null}
-        </Section>
-        {store.mistakes.length ? (
-          <Section title="Worth a look" testID="summary-mistakes">
-            {store.mistakes.slice(0, 10).map((m, i) => (
-              <ListItem
-                key={i}
-                title={`${m.lemma}: ${m.yourText || '—'} → ${m.correction}`}
-                subtitle={m.explanation}
-              />
-            ))}
-          </Section>
-        ) : null}
-        <Button
-          testID="summary-done"
-          size="large"
-          label="Done"
-          onPress={() => {
-            store.reset();
-            router.back();
-          }}
-        />
-      </Screen>
+      <SessionSummary
+        header={header}
+        session={session}
+        mistakes={store.mistakes}
+        xp={store.xp}
+        bestCombo={store.bestCombo}
+        baseline={store.baseline}
+        onDone={() => {
+          store.reset();
+          router.back();
+        }}
+      />
     );
   }
 
@@ -470,6 +465,12 @@ export function StudyScreen() {
       footer={phase === 'question' ? <UmlautBar /> : null}
     >
       {header}
+      <SessionHud
+        answered={session?.answered ?? 0}
+        remaining={left + again}
+        xp={store.xp}
+        combo={store.combo}
+      />
       {phase === 'intro' ? (
         <IntroCard
           item={item}
@@ -485,6 +486,8 @@ export function StudyScreen() {
         <FeedbackView
           key={key}
           feedback={store.feedback}
+          combo={store.combo}
+          seed={store.shownAt}
           item={item}
           onContinue={() => store.next(now().getTime())}
           badLabel={store.feedback.outcome === 'pending' ? null : exerciseLabel}
@@ -573,6 +576,19 @@ function pendingFeedback(answer: string, reason: string | null, failed = false):
   };
 }
 
+/** Where you stand before a session, for the summary to compare against. */
+function baselineFor(db: Db, now: Date): Baseline {
+  const report = progressReport(db, now);
+  return {
+    totalXp: report.totalXp,
+    todayXp: report.today.xp,
+    level: report.level.level,
+    streak: report.streak.current,
+    activeToday: report.streak.activeToday,
+    badges: unlockedIds(report),
+  };
+}
+
 /**
  * Pick how an entry is asked, and mark a cached exercise used the moment
  * it is shown. Words you mix up come as a contrast set first; then grammar
@@ -617,19 +633,32 @@ function presentEntry(db: Db, entry: QueueEntry, now: number): Presentation {
   return { mode: 'classic' };
 }
 
+const FEEDBACK_ICONS = {
+  correct: 'checkmark',
+  slip: 'checkmark',
+  wrong: 'close',
+  revealed: 'bulb',
+  pending: 'cloud-upload',
+} as const;
+
 function FeedbackView({
   feedback,
+  combo,
+  seed,
   item,
   onContinue,
   badLabel,
   onBadSentence,
 }: {
   feedback: Feedback;
+  combo: number;
+  seed: number;
   item: { exampleDe: string | null; exampleEn: string | null };
   onContinue: () => void;
   badLabel: string | null;
   onBadSentence: () => void;
 }) {
+  const theme = useTheme();
   const [removed, setRemoved] = useState(false);
   const pending = feedback.outcome === 'pending';
   const example =
@@ -655,6 +684,23 @@ function FeedbackView({
           ? 'Here it is'
           : 'Not quite';
   const color = tone === 'good' ? 'successText' : tone === 'okay' ? 'warningText' : 'errorText';
+  const accent =
+    feedback.outcome === 'revealed' || pending
+      ? theme.primary
+      : tone === 'good'
+        ? theme.success
+        : tone === 'okay'
+          ? theme.warning
+          : theme.danger;
+  const praise = praiseFor(feedback.outcome, seed);
+
+  // Feel the answer as well as see it.
+  useEffect(() => {
+    if (feedback.outcome === 'correct') haptics.success();
+    else if (feedback.outcome === 'slip') haptics.warning();
+    else if (feedback.outcome === 'wrong') haptics.error();
+  }, [feedback.outcome]);
+
   return (
     <View style={{ flex: 1, gap: 16 }}>
       {/* The answer fills the top; Continue stays at the bottom for one-handed use. */}
@@ -662,61 +708,92 @@ function FeedbackView({
         style={{ flex: 1 }}
         contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', gap: 16 }}
       >
-        <FeedbackPanel tone={tone} testID="study-feedback">
-          <AppText variant="heading" color={color} testID="feedback-headline">
-            {headline}
-          </AppText>
-          {pending ? (
-            feedback.given ? (
-              <AppText color={color} style={{ fontStyle: 'italic' }}>
-                {feedback.given}
-              </AppText>
-            ) : null
-          ) : (
-            <AppText variant="title" color={color} testID="feedback-expected">
-              {feedback.expected}
+        <View style={styles.cheerRow}>
+          <FadeIn from="scale">
+            <View style={[styles.badge, { backgroundColor: accent }]}>
+              <Ionicons name={FEEDBACK_ICONS[feedback.outcome]} size={30} color={theme.surface} />
+            </View>
+          </FadeIn>
+          <View style={{ flex: 1 }}>
+            <AppText variant="title" style={{ color: accent }} testID="feedback-praise">
+              {praise}
             </AppText>
-          )}
-          {feedback.translation ? (
-            <TranslationResult grade={feedback.translation} given={feedback.given} color={color} />
-          ) : (
-            <>
-              {feedback.given && feedback.outcome !== 'correct' && !pending ? (
-                <AppText color={color}>You wrote: {feedback.given}</AppText>
-              ) : null}
-              {feedback.mistakes.map((m, i) => (
-                <AppText key={i} color={color} variant="caption">
-                  {m.explanation}
+            {tone === 'good' && combo >= 3 ? (
+              <AppText variant="label" style={{ color: theme.streakText }} testID="feedback-combo">
+                🔥 {combo} in a row
+              </AppText>
+            ) : null}
+          </View>
+          {feedback.xp ? (
+            <FadeIn from="scale" delay={150}>
+              <View style={[styles.xp, { backgroundColor: theme.xpSoft }]} testID="feedback-xp">
+                <AppText variant="label" style={{ color: theme.xpText }}>
+                  +{feedback.xp} XP
                 </AppText>
-              ))}
-            </>
-          )}
-          {feedback.note ? (
-            <AppText color={color} variant="caption" testID="feedback-note">
-              {feedback.note}
-            </AppText>
+              </View>
+            </FadeIn>
           ) : null}
-          {feedback.hook ? (
-            <AppText color={color} variant="caption" testID="feedback-hook">
-              Memory hook: {feedback.hook}
+        </View>
+        <FadeIn delay={60}>
+          <FeedbackPanel tone={tone} testID="study-feedback">
+            <AppText variant="label" color={color} testID="feedback-headline">
+              {headline}
             </AppText>
-          ) : null}
-          {feedback.ratings ? (
-            feedback.ratings.map((r, i) => (
-              <AppText key={i} color={color} variant="caption" testID="feedback-rating">
-                {r.label}: rated {RATING_LABELS[r.rating]}
+            {pending ? (
+              feedback.given ? (
+                <AppText color={color} style={{ fontStyle: 'italic' }}>
+                  {feedback.given}
+                </AppText>
+              ) : null
+            ) : (
+              <AppText variant="title" color={color} testID="feedback-expected">
+                {feedback.expected}
               </AppText>
-            ))
-          ) : feedback.rating !== null ? (
-            <AppText color={color} variant="caption" testID="feedback-rating">
-              Rated {RATING_LABELS[feedback.rating]}
-            </AppText>
-          ) : null}
-        </FeedbackPanel>
+            )}
+            {feedback.translation ? (
+              <TranslationResult
+                grade={feedback.translation}
+                given={feedback.given}
+                color={color}
+              />
+            ) : (
+              <>
+                {feedback.given && feedback.outcome !== 'correct' && !pending ? (
+                  <AppText color={color}>You wrote: {feedback.given}</AppText>
+                ) : null}
+                {feedback.mistakes.map((m, i) => (
+                  <AppText key={i} color={color} variant="caption">
+                    {m.explanation}
+                  </AppText>
+                ))}
+              </>
+            )}
+            {feedback.note ? (
+              <AppText color={color} variant="caption" testID="feedback-note">
+                {feedback.note}
+              </AppText>
+            ) : null}
+            {feedback.hook ? (
+              <AppText color={color} variant="caption" testID="feedback-hook">
+                💡 Memory hook: {feedback.hook}
+              </AppText>
+            ) : null}
+            {feedback.ratings ? (
+              feedback.ratings.map((r, i) => (
+                <AppText key={i} color={color} variant="caption" testID="feedback-rating">
+                  {r.label}: rated {RATING_LABELS[r.rating]}
+                </AppText>
+              ))
+            ) : feedback.rating !== null ? (
+              <AppText color={color} variant="caption" testID="feedback-rating">
+                Rated {RATING_LABELS[feedback.rating]}
+              </AppText>
+            ) : null}
+          </FeedbackPanel>
+        </FadeIn>
         {example ? (
-          <View style={{ gap: 2 }} testID="feedback-example">
-            <AppText style={{ fontStyle: 'italic' }}>{example.de}</AppText>
-            {example.en ? <AppText variant="caption">{example.en}</AppText> : null}
+          <View testID="feedback-example">
+            <ExampleBlock de={example.de} en={example.en} />
           </View>
         ) : null}
         {badLabel && removed ? (
@@ -727,6 +804,7 @@ function FeedbackView({
           <Button
             testID="gap-bad"
             variant="ghost"
+            icon="flag-outline"
             label={badLabel}
             onPress={() => {
               onBadSentence();
@@ -735,7 +813,35 @@ function FeedbackView({
           />
         ) : null}
       </ScrollView>
-      <Button testID="study-continue" size="large" label="Continue" onPress={onContinue} />
+      <Button
+        testID="study-continue"
+        size="large"
+        label="Continue"
+        variant={
+          feedback.outcome === 'correct'
+            ? 'success'
+            : feedback.outcome === 'slip'
+              ? 'warning'
+              : feedback.outcome === 'wrong'
+                ? 'danger'
+                : 'primary'
+        }
+        onPress={onContinue}
+      />
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  empty: { alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.xl },
+  emptyIcon: { fontSize: 64 },
+  cheerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  badge: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  xp: { borderRadius: radius.pill, paddingHorizontal: spacing.md, paddingVertical: 6 },
+});

@@ -7,11 +7,11 @@ import type { TranslationExercise, TranslationGrade } from '@/core/translation';
 import { AppText } from '@/ui/AppText';
 import { Button } from '@/ui/Button';
 import { Row } from '@/ui/layout';
-import { spacing, useTheme } from '@/ui/theme';
+import { fonts, radius, spacing, useTheme } from '@/ui/theme';
 import { GermanField } from '@/ui/umlaut';
 
 import { MISTAKE_LABELS, VERDICT_LABELS } from '../words/describe';
-import { FeedbackPanel, QuestionLayout } from './questions';
+import { FeedbackPanel, PromptLabel, QuestionLayout } from './questions';
 
 /** Wait this long for the LLM's grade before offering to grade it later. */
 export const GRADE_LATER_MS = 4000;
@@ -74,15 +74,44 @@ export function DrillQuestion({
     <QuestionLayout
       prompt={
         <View style={{ alignItems: 'center', gap: spacing.sm }} testID="drill-prompt">
-          <AppText variant="caption" testID="drill-progress">
-            {label} · {index + 1} of {items.length}
-          </AppText>
+          <PromptLabel testID="drill-progress">{`${label} · ${index + 1} of ${items.length}`}</PromptLabel>
+          <View style={{ flexDirection: 'row', gap: 6 }}>
+            {items.map((_, i) => {
+              const r = results[i];
+              const color = r
+                ? r.outcome === 'correct'
+                  ? theme.success
+                  : r.outcome === 'slip'
+                    ? theme.warning
+                    : theme.danger
+                : i === index
+                  ? theme.primary
+                  : theme.track;
+              return (
+                <View
+                  key={i}
+                  style={{
+                    width: i === index ? 22 : 10,
+                    height: 10,
+                    borderRadius: radius.pill,
+                    backgroundColor: color,
+                  }}
+                />
+              );
+            })}
+          </View>
           <AppText variant="label" style={{ textAlign: 'center' }}>
             {title}
           </AppText>
           <AppText variant="heading" style={{ textAlign: 'center' }} testID="drill-sentence">
             {before}
-            <Text style={{ color: theme.primary, fontWeight: '700' }}>
+            <Text
+              style={{
+                color: theme.primary,
+                fontFamily: fonts.black,
+                backgroundColor: theme.primarySoft,
+              }}
+            >
               {result ? result.expected : '____'}
             </Text>
             {after}
@@ -162,6 +191,7 @@ export function DrillQuestion({
             <Button
               testID="drill-bad"
               variant="ghost"
+              icon="flag-outline"
               label="Bad exercise"
               accessibilityHint="Removes this exercise; a new one gets written next time"
               onPress={onBad}
@@ -190,7 +220,7 @@ export function TranslationQuestion({
     <QuestionLayout
       prompt={
         <View style={{ alignItems: 'center', gap: spacing.sm }} testID="translation-prompt">
-          <AppText variant="caption">Write it in German</AppText>
+          <PromptLabel>Write it in German</PromptLabel>
           <AppText variant="heading" style={{ textAlign: 'center' }} testID="translation-english">
             {exercise.english}
           </AppText>
@@ -234,6 +264,7 @@ export function TranslationQuestion({
       <Button
         testID="translation-bad"
         variant="ghost"
+        icon="flag-outline"
         label="Bad sentence"
         accessibilityHint="Removes this sentence and asks the card another way"
         onPress={onBad}
@@ -244,6 +275,7 @@ export function TranslationQuestion({
 
 /** While the LLM grades a translation. After a few seconds you can move on and see it later. */
 export function GradingView({ answer, onLater }: { answer: string; onLater: () => void }) {
+  const theme = useTheme();
   const [slow, setSlow] = useState(false);
   useEffect(() => {
     const timer = setTimeout(() => setSlow(true), GRADE_LATER_MS);
@@ -252,10 +284,14 @@ export function GradingView({ answer, onLater }: { answer: string; onLater: () =
   return (
     <View style={{ flex: 1, justifyContent: 'center', gap: spacing.lg }} testID="study-grading">
       <Row style={{ justifyContent: 'center' }}>
-        <ActivityIndicator />
-        <AppText>Checking your German…</AppText>
+        <ActivityIndicator color={theme.primary} size="large" />
+        <AppText variant="heading">Checking your German…</AppText>
       </Row>
-      <AppText style={{ textAlign: 'center', fontStyle: 'italic' }}>{answer}</AppText>
+      <View
+        style={{ backgroundColor: theme.surface, borderRadius: radius.lg, padding: spacing.lg }}
+      >
+        <AppText style={{ textAlign: 'center', fontStyle: 'italic' }}>{answer}</AppText>
+      </View>
       {slow ? (
         <Button
           testID="study-grade-later"

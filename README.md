@@ -16,6 +16,9 @@ Built with React Native and Expo. Everything lives on the phone: no accounts, no
 - **Leeches and mix-ups.** Cards you keep forgetting get a memory hook; words you confuse, such as *stellen* and *stehen*, come back together in contrast exercises.
 - **Word suggestions.** When your queue runs dry, the app suggests A2 words for the current chapter, and you approve each one.
 - **Chapters.** Items are tagged by textbook chapter (Momente A2).
+- **Progress you can see.** Every card earns XP, harder exercises earn more, and a daily goal ring fills as you go. Streaks come with freezes, so one missed day does not erase weeks. There are levels with German titles, an activity calendar and badges. All of it is computed from your review history, so a backup restores it too.
+- **A daily reminder, if you want one.** Off until you turn it on. It sends one local notification a day at the hour you pick and skips days you already studied. The text names your streak and any banked freezes, and never guilt-trips.
+- **A friendlier study session.** Articles are coloured by gender (der blue, die red, das green), answers get instant colour, haptics and a German cheer, a combo counter tracks answers in a row, and every session ends with a summary of what you earned.
 - **Budget control.** Tracks token usage and stops at a monthly spending cap.
 - **Backups.** Export and import your whole deck as a file.
 
@@ -81,4 +84,4 @@ scripts/      Mock LLM server and data build scripts
 
 ## Status
 
-Work in progress. The deck, scheduler, word entry, gap fills, translations, grammar drills, weak spots and leech handling work. Next up: mini stories, chat roleplay, and stats with streaks.
+Work in progress. The deck, scheduler, word entry, gap fills, translations, grammar drills, weak spots, leech handling, and progress (XP, streaks, badges) work. Next up: mini stories and chat roleplay.

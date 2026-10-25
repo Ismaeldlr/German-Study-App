@@ -1,8 +1,8 @@
-import type { ComponentRef, Ref } from 'react';
+import { useState, type ComponentRef, type Ref } from 'react';
 import { StyleSheet, TextInput, View, type TextInputProps } from 'react-native';
 
 import { AppText } from './AppText';
-import { radius, spacing, useTheme } from './theme';
+import { fonts, radius, spacing, useTheme } from './theme';
 
 export type TextFieldProps = TextInputProps & {
   ref?: Ref<ComponentRef<typeof TextInput>>;
@@ -22,9 +22,12 @@ export function TextField({
   error,
   style,
   multiline,
+  onFocus,
+  onBlur,
   ...rest
 }: TextFieldProps) {
   const theme = useTheme();
+  const [focused, setFocused] = useState(false);
   return (
     <View style={styles.wrapper}>
       {label ? <AppText variant="label">{label}</AppText> : null}
@@ -43,10 +46,18 @@ export function TextField({
           {
             color: theme.text,
             backgroundColor: theme.surface,
-            borderColor: error ? theme.danger : theme.border,
+            borderColor: error ? theme.danger : focused ? theme.primary : theme.border,
           },
           style,
         ]}
+        onFocus={(event) => {
+          setFocused(true);
+          onFocus?.(event);
+        }}
+        onBlur={(event) => {
+          setFocused(false);
+          onBlur?.(event);
+        }}
         {...rest}
       />
       {error ? (
@@ -63,12 +74,13 @@ export function TextField({
 const styles = StyleSheet.create({
   wrapper: { gap: spacing.xs },
   input: {
-    minHeight: 48,
-    borderWidth: 1,
+    minHeight: 52,
+    borderWidth: 2,
     borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: spacing.md + 2,
     paddingVertical: spacing.sm,
-    fontSize: 16,
+    fontSize: 17,
+    fontFamily: fonts.semibold,
   },
   multiline: { minHeight: 140, textAlignVertical: 'top' },
 });

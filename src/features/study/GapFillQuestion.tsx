@@ -12,10 +12,10 @@ import type { ItemKind } from '@/core/model';
 import { AppText } from '@/ui/AppText';
 import { Button } from '@/ui/Button';
 import { Row } from '@/ui/layout';
-import { spacing, useTheme } from '@/ui/theme';
+import { fonts, radius, spacing, useTheme } from '@/ui/theme';
 import { GermanField } from '@/ui/umlaut';
 
-import { QuestionLayout, type OnResult } from './questions';
+import { PromptLabel, QuestionLayout, type OnResult } from './questions';
 
 /**
  * A generated sentence with the target blanked out. Words you might not
@@ -56,13 +56,17 @@ export function GapFillQuestion({
     <QuestionLayout
       prompt={
         <View style={{ alignItems: 'center', gap: spacing.sm }} testID="gap-prompt">
-          <AppText variant="caption">Fill the gap</AppText>
+          <PromptLabel>Fill the gap</PromptLabel>
           <AppText variant="heading" style={{ textAlign: 'center' }} testID="gap-sentence">
             {tokens.map((token, i) =>
               token.blank ? (
                 <Text
                   key={i}
-                  style={{ color: theme.primary, fontWeight: '700' }}
+                  style={{
+                    color: theme.primary,
+                    fontFamily: fonts.black,
+                    backgroundColor: theme.primarySoft,
+                  }}
                   testID="gap-blank"
                 >
                   {letterShown ? `${firstLetter(exercise.answer)}___` : '____'}
@@ -73,7 +77,11 @@ export function GapFillQuestion({
                   accessibilityRole="button"
                   accessibilityHint="Shows the English"
                   onPress={() => setGloss({ word: token.text, en: token.gloss! })}
-                  style={{ textDecorationLine: 'underline', textDecorationStyle: 'dotted' }}
+                  style={{
+                    textDecorationLine: 'underline',
+                    textDecorationStyle: 'dotted',
+                    textDecorationColor: theme.primary,
+                  }}
                 >
                   {token.text}
                 </Text>
@@ -86,9 +94,13 @@ export function GapFillQuestion({
             ({exercise.cue})
           </AppText>
           {gloss ? (
-            <AppText variant="caption" testID="gap-gloss">
-              {gloss.word.replace(/[.,!?;:"„“()]/g, '')}: {gloss.en}
-            </AppText>
+            <View
+              style={{ backgroundColor: theme.surfaceAlt, borderRadius: radius.sm, padding: 6 }}
+            >
+              <AppText variant="caption" testID="gap-gloss">
+                {gloss.word.replace(/[.,!?;:"„“()]/g, '')}: {gloss.en}
+              </AppText>
+            </View>
           ) : null}
         </View>
       }
@@ -126,6 +138,7 @@ export function GapFillQuestion({
           <Button
             testID="gap-hint"
             variant="ghost"
+            icon="bulb-outline"
             label="Hint"
             accessibilityHint="Shows the first letter. The card counts as Hard."
             onPress={() => {
@@ -137,6 +150,7 @@ export function GapFillQuestion({
         <Button
           testID="gap-bad"
           variant="ghost"
+          icon="flag-outline"
           label="Bad sentence"
           accessibilityHint="Removes this sentence and asks the card another way"
           onPress={onBadSentence}

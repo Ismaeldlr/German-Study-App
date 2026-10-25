@@ -51,7 +51,7 @@ export function UmlautBar({ testID = 'umlaut-bar' }: { testID?: string }) {
   return (
     <View
       testID={testID}
-      style={[styles.bar, { backgroundColor: theme.surface, borderTopColor: theme.border }]}
+      style={[styles.bar, { backgroundColor: theme.surfaceAlt, borderTopColor: theme.border }]}
     >
       {UMLAUTS.map((letter) => (
         <Pressable
@@ -63,12 +63,16 @@ export function UmlautBar({ testID = 'umlaut-bar' }: { testID?: string }) {
           style={({ pressed }) => [
             styles.key,
             {
-              backgroundColor: pressed ? theme.surfaceAlt : theme.background,
+              backgroundColor: pressed ? theme.primarySoft : theme.surface,
               borderColor: theme.border,
+              borderBottomWidth: pressed ? 1 : 3,
+              transform: [{ translateY: pressed ? 2 : 0 }],
             },
           ]}
         >
-          <AppText variant="heading">{letter}</AppText>
+          <AppText variant="heading" style={{ color: theme.primary }}>
+            {letter}
+          </AppText>
         </Pressable>
       ))}
     </View>
@@ -142,7 +146,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.xs,
     paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
+    paddingVertical: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   key: {
@@ -151,6 +155,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radius.sm,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 1,
   },
 });

@@ -35,6 +35,14 @@ export const settingsSchema = {
   /** Your own topics; about 30% of generated sentences use one. */
   'study.interests': z.array(z.string()),
   'study.currentChapterId': z.number().int().nullable(),
+  /** Daily XP goal; about 30 XP is a minute of study. */
+  'study.dailyGoalXp': z.number().int().min(10).max(1000),
+  /** Vibrate on right and wrong answers. */
+  'ui.haptics': z.boolean(),
+  /** One study reminder a day, skipped once you studied. Off until you turn it on. */
+  'ui.reminderEnabled': z.boolean(),
+  /** Local hour the reminder fires at. */
+  'ui.reminderHour': z.number().int().min(0).max(23),
   /** When the last backup was exported, for the weekly nudge. */
   'data.lastExportAt': z.number().nullable(),
 } as const;
@@ -55,6 +63,10 @@ export const SETTING_DEFAULTS: SettingsValues = {
   'study.sessionMinutes': 10,
   'study.interests': [],
   'study.currentChapterId': null,
+  'study.dailyGoalXp': 100,
+  'ui.haptics': true,
+  'ui.reminderEnabled': false,
+  'ui.reminderHour': 19,
   'data.lastExportAt': null,
 };
 

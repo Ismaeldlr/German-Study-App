@@ -41,7 +41,7 @@ export function LlmSettings() {
 
   return (
     <>
-      <Section title="LLM provider" testID="llm-section">
+      <Section title="LLM provider" icon="🤖" testID="llm-section">
         <Segmented
           testID="provider"
           accessibilityLabel="Provider"
@@ -225,7 +225,7 @@ function CostSettings({ model }: { model: string }) {
   };
 
   return (
-    <Section title="Cost" testID="cost-section">
+    <Section title="Cost" icon="💸" testID="cost-section">
       <AppText variant="caption">
         Prices for {model || 'the selected model'}, in USD per million tokens.
       </AppText>
