@@ -1,17 +1,22 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Alert, View } from 'react-native';
+import { Alert, Linking, View } from 'react-native';
 
 import { parseDecimal } from '@/core/format';
+import { DAILY_GOALS, XP_PER_MINUTE } from '@/core/progress';
+import { hourLabel, nextReminder, REMINDER_HOURS } from '@/core/reminders';
+import { localDay } from '@/core/time';
 import { chapterLabel, listChapters, parseThemes } from '@/data/repos/chapters';
 import { restoreBackup } from '@/data/repos/backup';
+import { pulse } from '@/data/repos/progress';
 import { getAllSettings, setSetting } from '@/data/repos/settings';
 import { AppText } from '@/ui/AppText';
 import { Button } from '@/ui/Button';
-import { Chip } from '@/ui/controls';
-import { Banner, Row, Section } from '@/ui/layout';
+import { Chip, SwitchRow } from '@/ui/controls';
+import { Banner, Row, Section, Segmented } from '@/ui/layout';
 import { TextField } from '@/ui/TextField';
 
+import { requestReminderPermission, syncReminders } from '../reminders';
 import { useStudyStore } from '../study/store';
 import { useServices } from '../services';
 import { useLiveQuery } from '../use-live-query';
@@ -24,9 +29,35 @@ export function StudySettings() {
   const chapters = useLiveQuery(() => listChapters(db), ['chapter']);
   const current = settings['study.currentChapterId'];
 
+  const goal = settings['study.dailyGoalXp'];
+  const preset = DAILY_GOALS.find((g) => g.xp === goal);
   return (
     <>
-      <Section title="Class" testID="class-section">
+      <Section title="Daily goal" icon="🎯" testID="goal-section">
+        <Segmented
+          testID="daily-goal"
+          accessibilityLabel="Daily goal"
+          options={DAILY_GOALS.map((g) => ({ value: String(g.xp), label: g.label }))}
+          value={preset ? String(preset.xp) : null}
+          onChange={(value) => setSetting(db, 'study.dailyGoalXp', Number(value))}
+        />
+        <AppText variant="caption">
+          {goal} XP a day, about {Math.max(1, Math.round(goal / XP_PER_MINUTE))} min. Small and
+          every day beats long and now and then. When nothing is left to study, the day counts as
+          done anyway.
+        </AppText>
+        <ReminderSetting
+          enabled={settings['ui.reminderEnabled']}
+          hour={settings['ui.reminderHour']}
+        />
+        <SwitchRow
+          testID="haptics"
+          label="Vibrate on right and wrong answers"
+          value={settings['ui.haptics']}
+          onValueChange={(on) => setSetting(db, 'ui.haptics', on)}
+        />
+      </Section>
+      <Section title="Class" icon="🏫" testID="class-section">
         <AppText variant="caption">New words land in the current chapter.</AppText>
         <Row>
           {chapters.map((c) => (
@@ -46,7 +77,7 @@ export function StudySettings() {
           onPress={() => router.push('/chapters')}
         />
       </Section>
-      <Section title="Study" testID="study-section">
+      <Section title="Study" icon="📚" testID="study-section">
         <NumberSetting
           testID="target-recall"
           label="Target recall (%)"
@@ -99,6 +130,65 @@ export function StudySettings() {
           onChange={(interests) => setSetting(db, 'study.interests', interests)}
         />
       </Section>
+    </>
+  );
+}
+
+/** The daily reminder. Permission is asked for only when you turn it on. */
+function ReminderSetting({ enabled, hour }: { enabled: boolean; hour: number }) {
+  const { db, now } = useServices();
+  const next = useLiveQuery(
+    () => nextReminder(pulse(db, now()).streak, hour, now()),
+    ['review', 'settings'],
+  );
+  const [blocked, setBlocked] = useState(false);
+
+  const toggle = async (on: boolean) => {
+    if (on && !(await requestReminderPermission())) {
+      setBlocked(true);
+      return;
+    }
+    setBlocked(false);
+    setSetting(db, 'ui.reminderEnabled', on);
+    await syncReminders(db, now());
+  };
+  const pickHour = async (value: string) => {
+    setSetting(db, 'ui.reminderHour', Number(value));
+    await syncReminders(db, now());
+  };
+
+  const when = next && localDay(next.date) === localDay(now()) ? 'today' : 'tomorrow';
+  return (
+    <>
+      <SwitchRow testID="reminder" label="Daily reminder" value={enabled} onValueChange={toggle} />
+      {enabled ? (
+        <>
+          <Segmented
+            testID="reminder-hour"
+            accessibilityLabel="Reminder time"
+            options={REMINDER_HOURS.map((h) => ({ value: String(h), label: hourLabel(h) }))}
+            value={String(hour)}
+            onChange={pickHour}
+          />
+          <AppText variant="caption" testID="reminder-next">
+            Next one {when} at {hourLabel(hour)}. One a day at most, and none once you studied that
+            day.
+          </AppText>
+        </>
+      ) : null}
+      {blocked ? (
+        <Banner tone="warning" testID="reminder-blocked">
+          <AppText color="warningText">
+            Notifications are off for this app. Allow them in your phone&apos;s settings to get
+            reminders.
+          </AppText>
+          <Button
+            label="Open settings"
+            variant="secondary"
+            onPress={() => void Linking.openSettings()}
+          />
+        </Banner>
+      ) : null}
     </>
   );
 }
@@ -220,7 +310,7 @@ export function DataSettings() {
   };
 
   return (
-    <Section title="Backup" testID="data-section">
+    <Section title="Backup" icon="💾" testID="data-section">
       <AppText variant="caption">
         Your deck lives only on this phone. Exports never include your API key.
         {lastExport ? ` Last export: ${shortDate(lastExport)}.` : ' Never exported.'}
@@ -247,7 +337,7 @@ export function DataSettings() {
 
 export function AboutSection() {
   return (
-    <Section title="About">
+    <Section title="About" icon="ℹ️">
       <AppText variant="caption">
         Noun genders and plurals for the offline check come from Wiktionary, via the german-nouns
         list by gambolputty (CC BY-SA 4.0). No analytics: data leaves the phone only for the LLM

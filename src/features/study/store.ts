@@ -59,6 +59,8 @@ export interface Feedback {
   note?: string | null;
   /** The item's memory hook, shown when you got it wrong. */
   hook?: string | null;
+  /** XP this answer earned. */
+  xp?: number;
 }
 
 /** One card's new schedule after an answer. */
@@ -74,6 +76,16 @@ export interface SessionMistake extends MistakeNote {
   lemma: string;
 }
 
+/** Where you stood when the session began, so the summary can show what changed. */
+export interface Baseline {
+  totalXp: number;
+  todayXp: number;
+  level: number;
+  streak: number;
+  activeToday: boolean;
+  badges: string[];
+}
+
 interface StudyStore {
   sessionId: number | null;
   /** Local day the session started, so an unfinished one is not resumed tomorrow. */
@@ -87,12 +99,22 @@ interface StudyStore {
   mistakes: SessionMistake[];
   /** The waiting answer being graded while you watch. */
   gradingId: number | null;
+  /** XP earned this session. */
+  xp: number;
+  /** Answers remembered in a row, and the longest run this session. */
+  combo: number;
+  bestCombo: number;
+  baseline: Baseline | null;
   present: (entry: QueueEntry) => Presentation;
   begin(
     sessionId: number,
     queue: QueueEntry[],
     now: number,
-    options?: { deadline?: number | null; present?: (entry: QueueEntry) => Presentation },
+    options?: {
+      deadline?: number | null;
+      present?: (entry: QueueEntry) => Presentation;
+      baseline?: Baseline | null;
+    },
   ): void;
   empty(): void;
   next(now: number): void;
@@ -126,6 +148,10 @@ const initial = {
   feedback: null,
   mistakes: [],
   gradingId: null,
+  xp: 0,
+  combo: 0,
+  bestCombo: 0,
+  baseline: null,
   present: () => CLASSIC,
 };
 
@@ -138,6 +164,7 @@ export const useStudyStore = create<StudyStore>((set, get) => ({
       day: localDay(new Date(now)),
       session: startSession(queue, options.deadline ?? null),
       present: options.present ?? (() => CLASSIC),
+      baseline: options.baseline ?? null,
     });
     get().next(now);
   },
@@ -179,7 +206,7 @@ export const useStudyStore = create<StudyStore>((set, get) => ({
     set({ presentation: CLASSIC, phase: 'question', shownAt: now });
   },
   answered(feedback, results, lemma, now) {
-    const { session, entry, mistakes } = get();
+    const { session, entry, mistakes, combo, bestCombo, xp } = get();
     if (!session || !entry) return;
     const others = results.filter((r) => r.cardId !== entry.cardId);
     let next = dropCards(
@@ -199,12 +226,17 @@ export const useStudyStore = create<StudyStore>((set, get) => ({
             };
       next = recordAnswer(next, answeredEntry, result, now);
     }
+    const remembered = feedback.outcome === 'correct' || feedback.outcome === 'slip';
+    const nextCombo = remembered ? combo + 1 : 0;
     set({
       session: next,
       feedback,
       gradingId: null,
       phase: 'feedback',
       mistakes: [...mistakes, ...feedback.mistakes.map((m) => ({ ...m, lemma }))],
+      xp: xp + (feedback.xp ?? 0),
+      combo: nextCombo,
+      bestCombo: Math.max(bestCombo, nextCombo),
     });
   },
   grading(id) {

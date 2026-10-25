@@ -1,18 +1,18 @@
 import { router } from 'expo-router';
 import { useState, type ReactNode } from 'react';
-import { FlatList, ScrollView, View } from 'react-native';
+import { FlatList, ScrollView, StyleSheet, View } from 'react-native';
 
-import { displayLemma, type ItemState } from '@/core/cards';
+import type { ItemState } from '@/core/cards';
 import type { ItemKind } from '@/core/model';
 import { chapterLabel, listChapters } from '@/data/repos/chapters';
 import { listDeck, type DeckRow } from '@/data/repos/items';
 import { pendingSuggestions } from '@/data/repos/suggestions';
 import { AppText } from '@/ui/AppText';
 import { Button } from '@/ui/Button';
-import { Chip, ListItem, StatePill } from '@/ui/controls';
-import { Row } from '@/ui/layout';
+import { Chip, ListItem, StatePill, stateColors } from '@/ui/controls';
 import { TextField } from '@/ui/TextField';
-import { spacing, useTheme } from '@/ui/theme';
+import { genderColors, radius, spacing, useTheme } from '@/ui/theme';
+import { Lemma } from '@/ui/visuals';
 
 import { useServices } from '../services';
 import { useLiveQuery } from '../use-live-query';
@@ -52,29 +52,40 @@ export function WordsScreen() {
   const suggestions = useLiveQuery(() => pendingSuggestions(db).length, ['suggestion']);
   const chapterNames = new Map(chapters.map((c) => [c.id, chapterLabel(c)]));
 
+  const counts = { new: 0, learning: 0, young: 0, mature: 0, suspended: 0 };
+  for (const row of rows) counts[row.state]++;
+
   const header = (
     <View style={{ gap: spacing.md, paddingBottom: spacing.sm }}>
-      <Row>
-        <Button testID="words-add" label="Add word" onPress={() => router.push('/add')} />
+      <ChipRow>
+        <Button
+          testID="words-add"
+          icon="add"
+          label="Add word"
+          onPress={() => router.push('/add')}
+        />
         <Button
           testID="words-paste"
+          icon="clipboard-outline"
           label="Paste list"
           variant="secondary"
           onPress={() => router.push('/paste')}
         />
         <Button
           testID="words-grammar"
+          icon="extension-puzzle-outline"
           label="Add grammar"
           variant="secondary"
           onPress={() => router.push('/add-grammar')}
         />
         <Button
           testID="words-suggestions"
+          icon="bulb-outline"
           label={suggestions ? `Suggestions (${suggestions})` : 'Suggest words'}
           variant="secondary"
           onPress={() => router.push('/suggestions')}
         />
-      </Row>
+      </ChipRow>
       <TextField
         testID="words-search"
         placeholder="Search German or English"
@@ -127,7 +138,25 @@ export function WordsScreen() {
           />
         ))}
       </ChipRow>
-      <AppText variant="caption" testID="words-count">
+      {rows.length ? (
+        <View style={{ gap: spacing.xs }}>
+          <View style={[styles.mastery, { backgroundColor: theme.track }]}>
+            {(['mature', 'young', 'learning', 'new', 'suspended'] as const).map((key) =>
+              counts[key] ? (
+                <View
+                  key={key}
+                  style={{ flex: counts[key], backgroundColor: stateColors(theme, key).dot }}
+                />
+              ) : null,
+            )}
+          </View>
+          <AppText variant="caption">
+            {counts.mature} mature · {counts.young} young · {counts.learning} learning ·{' '}
+            {counts.new} new
+          </AppText>
+        </View>
+      ) : null}
+      <AppText variant="overline" testID="words-count">
         {rows.length} {rows.length === 1 ? 'word' : 'words'}
       </AppText>
     </View>
@@ -152,7 +181,20 @@ export function WordsScreen() {
       renderItem={({ item: row }) => (
         <ListItem
           testID={`word-${row.item.id}`}
-          title={displayLemma(row.item)}
+          left={
+            <View
+              style={[
+                styles.stripe,
+                {
+                  backgroundColor:
+                    row.item.kind === 'noun'
+                      ? genderColors(theme, row.item.article).fg
+                      : theme.border,
+                },
+              ]}
+            />
+          }
+          title={<Lemma item={row.item} variant="label" />}
           subtitle={[
             row.item.meanings.slice(0, 2).join(', '),
             row.item.chapterId ? chapterNames.get(row.item.chapterId) : null,
@@ -168,6 +210,11 @@ export function WordsScreen() {
     />
   );
 }
+
+const styles = StyleSheet.create({
+  mastery: { height: 10, borderRadius: radius.pill, overflow: 'hidden', flexDirection: 'row' },
+  stripe: { width: 4, alignSelf: 'stretch', borderRadius: 2 },
+});
 
 function ChipRow({ children }: { children: ReactNode }) {
   return (

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { displayLemma } from '@/core/cards';
 import { buildChoices, meaningText, type ChoiceSource } from '@/core/choices';
@@ -15,8 +15,10 @@ import type { ItemRow } from '@/data/schema';
 import { AppText } from '@/ui/AppText';
 import { Button } from '@/ui/Button';
 import { Row } from '@/ui/layout';
-import { radius, spacing, useTheme } from '@/ui/theme';
+import { FadeIn } from '@/ui/motion';
+import { elevation, genderColors, radius, spacing, useTheme } from '@/ui/theme';
 import { GermanField } from '@/ui/umlaut';
+import { Lemma } from '@/ui/visuals';
 
 /** What a question reports back; the screen turns it into an FSRS rating. */
 export type QuestionResult =
@@ -26,25 +28,73 @@ export type QuestionResult =
 export type OnResult = (result: QuestionResult) => void;
 
 /**
- * Prompt in the top half, answer controls in the bottom half, so the whole
- * session works one-handed.
+ * Prompt in the top half, on a card, and answer controls in the bottom
+ * half, so the whole session works one-handed.
  */
 export function QuestionLayout({ prompt, children }: { prompt: ReactNode; children: ReactNode }) {
   return (
     <View style={styles.layout}>
-      <View style={styles.prompt}>{prompt}</View>
+      <View style={styles.prompt}>
+        <PromptCard>{prompt}</PromptCard>
+      </View>
       <View style={styles.controls}>{children}</View>
     </View>
   );
 }
 
-function Prompt({ label, text, sub }: { label: string; text: string; sub?: string | null }) {
+/** The flashcard itself: it pops in for every new question. */
+export function PromptCard({ children, accent }: { children: ReactNode; accent?: string }) {
+  const theme = useTheme();
   return (
-    <View style={{ alignItems: 'center', gap: spacing.sm }}>
-      <AppText variant="caption">{label}</AppText>
-      <AppText variant="title" style={{ textAlign: 'center' }} testID="study-prompt">
-        {text}
+    <FadeIn from="scale">
+      <View
+        style={[
+          styles.card,
+          { backgroundColor: theme.surface, borderColor: theme.border },
+          elevation(theme, 2),
+        ]}
+      >
+        {accent ? <View style={[styles.cardAccent, { backgroundColor: accent }]} /> : null}
+        {children}
+      </View>
+    </FadeIn>
+  );
+}
+
+/** A small coloured label at the top of a card: what kind of question this is. */
+export function PromptLabel({ children, testID }: { children: string; testID?: string }) {
+  const theme = useTheme();
+  return (
+    <View style={[styles.label, { backgroundColor: theme.primarySoft }]}>
+      <AppText variant="overline" style={{ color: theme.primary }} testID={testID}>
+        {children}
       </AppText>
+    </View>
+  );
+}
+
+function Prompt({
+  label,
+  text,
+  word,
+  sub,
+}: {
+  label: string;
+  text?: string;
+  /** A deck word, shown with its article in colour. */
+  word?: ItemRow;
+  sub?: string | null;
+}) {
+  return (
+    <View style={styles.promptBody}>
+      <PromptLabel>{label}</PromptLabel>
+      {word ? (
+        <Lemma item={word} variant="title" style={styles.promptText} testID="study-prompt" />
+      ) : (
+        <AppText variant="title" style={styles.promptText} testID="study-prompt">
+          {text}
+        </AppText>
+      )}
       {sub ? (
         <AppText variant="caption" style={{ textAlign: 'center' }}>
           {sub}
@@ -64,73 +114,82 @@ export function IntroCard({
   note?: { ruleSummary: string; examples: Example[] } | null;
   onContinue: () => void;
 }) {
+  const theme = useTheme();
   if (item.kind === 'grammar') {
     return (
-      <QuestionLayout
-        prompt={
-          <View style={{ alignItems: 'center', gap: spacing.sm }} testID="study-intro">
-            <AppText variant="caption">New grammar point</AppText>
-            <AppText variant="title" style={{ textAlign: 'center' }}>
-              {item.lemma}
-            </AppText>
-            {item.meanings[0] ? (
-              <AppText variant="caption" style={{ textAlign: 'center' }}>
-                {item.meanings[0]}
+      <View style={styles.layout}>
+        <View style={styles.prompt}>
+          <PromptCard accent={theme.primary}>
+            <View style={styles.promptBody} testID="study-intro">
+              <Text style={styles.introIcon}>🧩</Text>
+              <PromptLabel>New grammar point</PromptLabel>
+              <AppText variant="title" style={styles.promptText}>
+                {item.lemma}
               </AppText>
-            ) : null}
-            {note?.ruleSummary ? (
-              <AppText style={{ textAlign: 'center' }}>{note.ruleSummary}</AppText>
-            ) : null}
-            {(note?.examples ?? []).map((e, i) => (
-              <View key={i} style={{ alignItems: 'center' }}>
-                <AppText style={{ textAlign: 'center', fontStyle: 'italic' }}>{e.de}</AppText>
-                {e.en ? (
-                  <AppText variant="caption" style={{ textAlign: 'center' }}>
-                    {e.en}
-                  </AppText>
-                ) : null}
-              </View>
-            ))}
-          </View>
-        }
-      >
-        <Button testID="study-intro-continue" size="large" label="Try it" onPress={onContinue} />
-      </QuestionLayout>
+              {item.meanings[0] ? (
+                <AppText variant="caption" style={{ textAlign: 'center' }}>
+                  {item.meanings[0]}
+                </AppText>
+              ) : null}
+              {note?.ruleSummary ? (
+                <AppText style={{ textAlign: 'center' }}>{note.ruleSummary}</AppText>
+              ) : null}
+              {(note?.examples ?? []).map((e, i) => (
+                <ExampleBlock key={i} de={e.de} en={e.en} />
+              ))}
+            </View>
+          </PromptCard>
+        </View>
+        <View style={styles.controls}>
+          <Button testID="study-intro-continue" size="large" label="Try it" onPress={onContinue} />
+        </View>
+      </View>
     );
   }
+  const gender = genderColors(theme, item.kind === 'noun' ? item.article : null);
   return (
-    <QuestionLayout
-      prompt={
-        <View style={{ alignItems: 'center', gap: spacing.sm }} testID="study-intro">
-          <AppText variant="caption">New word</AppText>
-          <AppText variant="title" style={{ textAlign: 'center' }}>
-            {displayLemma(item)}
-          </AppText>
-          {item.kind === 'noun' && item.plural && item.article ? (
-            <AppText variant="caption">Plural: die {item.plural}</AppText>
-          ) : null}
-          {item.kind === 'verb' && item.verbParticiple ? (
-            <AppText variant="caption">
-              {item.verbPresent3} · {item.verbPreterite} ·{' '}
-              {item.verbAuxiliary === 'sein' ? 'ist' : 'hat'} {item.verbParticiple}
+    <View style={styles.layout}>
+      <View style={styles.prompt}>
+        <PromptCard accent={gender.fg}>
+          <View style={styles.promptBody} testID="study-intro">
+            <Text style={styles.introIcon}>✨</Text>
+            <PromptLabel>New word</PromptLabel>
+            <Lemma item={item} variant="display" style={styles.promptText} />
+            {item.kind === 'noun' && item.plural && item.article ? (
+              <AppText variant="caption">Plural: die {item.plural}</AppText>
+            ) : null}
+            {item.kind === 'verb' && item.verbParticiple ? (
+              <AppText variant="caption">
+                {item.verbPresent3} · {item.verbPreterite} ·{' '}
+                {item.verbAuxiliary === 'sein' ? 'ist' : 'hat'} {item.verbParticiple}
+              </AppText>
+            ) : null}
+            <AppText variant="heading" style={{ textAlign: 'center', color: gender.fg }}>
+              {item.meanings.join('; ')}
             </AppText>
-          ) : null}
-          <AppText variant="heading" style={{ textAlign: 'center' }}>
-            {item.meanings.join('; ')}
-          </AppText>
-          {item.exampleDe ? (
-            <AppText style={{ textAlign: 'center', fontStyle: 'italic' }}>{item.exampleDe}</AppText>
-          ) : null}
-          {item.exampleEn ? (
-            <AppText variant="caption" style={{ textAlign: 'center' }}>
-              {item.exampleEn}
-            </AppText>
-          ) : null}
-        </View>
-      }
-    >
-      <Button testID="study-intro-continue" size="large" label="Got it" onPress={onContinue} />
-    </QuestionLayout>
+            {item.exampleDe ? <ExampleBlock de={item.exampleDe} en={item.exampleEn} /> : null}
+          </View>
+        </PromptCard>
+      </View>
+      <View style={styles.controls}>
+        <Button testID="study-intro-continue" size="large" label="Got it" onPress={onContinue} />
+      </View>
+    </View>
+  );
+}
+
+/** An example sentence in a soft quote block. */
+export function ExampleBlock({ de, en }: { de: string; en?: string | null }) {
+  const theme = useTheme();
+  return (
+    <View style={[styles.example, { backgroundColor: theme.surfaceAlt }]}>
+      <AppText style={{ textAlign: 'center', fontStyle: 'italic' }}>{de}</AppText>
+      {en ? (
+        <AppText variant="caption" style={{ textAlign: 'center' }}>
+          {en}
+        </AppText>
+      ) : null}
+    </View>
   );
 }
 
@@ -146,7 +205,7 @@ export function RecognizeQuestion({
   const [choices] = useState(() => buildChoices(item, pool));
   const [revealed, setRevealed] = useState(false);
   const expected = meaningText(item.meanings);
-  const prompt = <Prompt label="What does this mean?" text={displayLemma(item)} />;
+  const prompt = <Prompt label="What does this mean?" word={item} />;
 
   if (!choices) {
     // Too few words in the deck for multiple choice yet.
@@ -300,6 +359,7 @@ export function ProduceQuestion({ item, onResult }: { item: ItemRow; onResult: O
 }
 
 export function GenderQuestion({ item, onResult }: { item: ItemRow; onResult: OnResult }) {
+  const theme = useTheme();
   const articles: Article[] = ['der', 'die', 'das'];
   return (
     <QuestionLayout
@@ -314,7 +374,7 @@ export function GenderQuestion({ item, onResult }: { item: ItemRow; onResult: On
             testID={`study-article-${article}`}
             style={{ flex: 1 }}
             size="large"
-            variant="secondary"
+            tint={{ face: genderColors(theme, article).fg, text: theme.onPrimary }}
             label={article}
             onPress={() =>
               onResult({ kind: 'graded', grade: gradeGender(item, article), answer: article })
@@ -329,13 +389,7 @@ export function GenderQuestion({ item, onResult }: { item: ItemRow; onResult: On
 export function PluralQuestion({ item, onResult }: { item: ItemRow; onResult: OnResult }) {
   return (
     <QuestionLayout
-      prompt={
-        <Prompt
-          label="What is the plural?"
-          text={displayLemma(item)}
-          sub={meaningText(item.meanings)}
-        />
-      }
+      prompt={<Prompt label="What is the plural?" word={item} sub={meaningText(item.meanings)} />}
     >
       <TypedAnswer
         placeholder="die …"
@@ -413,6 +467,30 @@ const styles = StyleSheet.create({
   layout: { flex: 1, gap: spacing.lg },
   prompt: { flex: 1, justifyContent: 'center', minHeight: 160 },
   controls: { gap: spacing.sm, paddingBottom: spacing.sm },
+  card: {
+    borderRadius: radius.xl,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.xl,
+    overflow: 'hidden',
+  },
+  cardAccent: { position: 'absolute', top: 0, left: 0, right: 0, height: 6 },
+  promptBody: { alignItems: 'center', gap: spacing.sm },
+  promptText: { textAlign: 'center' },
+  label: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+  },
+  introIcon: { fontSize: 34 },
+  example: {
+    alignSelf: 'stretch',
+    borderRadius: radius.md,
+    padding: spacing.md,
+    gap: 2,
+    marginTop: spacing.xs,
+  },
+  panel: { borderRadius: radius.lg, padding: spacing.lg, gap: spacing.sm, borderWidth: 2 },
 });
 
 export function FeedbackPanel({
@@ -426,11 +504,9 @@ export function FeedbackPanel({
 }) {
   const theme = useTheme();
   const bg = tone === 'good' ? theme.successBg : tone === 'okay' ? theme.warningBg : theme.errorBg;
+  const edge = tone === 'good' ? theme.success : tone === 'okay' ? theme.warning : theme.danger;
   return (
-    <View
-      testID={testID}
-      style={{ backgroundColor: bg, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.sm }}
-    >
+    <View testID={testID} style={[styles.panel, { backgroundColor: bg, borderColor: edge }]}>
       {children}
     </View>
   );

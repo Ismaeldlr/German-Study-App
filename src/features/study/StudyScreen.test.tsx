@@ -1,4 +1,4 @@
-import { fireEvent, screen } from '@testing-library/react-native';
+import { fireEvent, screen, waitFor } from '@testing-library/react-native';
 import { eq } from 'drizzle-orm';
 
 import { createItem } from '@/data/repos/items';
@@ -7,6 +7,7 @@ import { card, review, studySession } from '@/data/schema';
 import { itemInput, verbInput } from '@/data/testing/fixtures';
 import { UmlautProvider } from '@/ui/umlaut';
 
+import * as Notifications from '../notifications';
 import { createTestServices, renderWithServices } from '../testing/render-with-services';
 import { StudyScreen } from './StudyScreen';
 import { useStudyStore } from './store';
@@ -28,6 +29,31 @@ async function deck(clock: { t: number }) {
     created + 2,
   );
   createItem(services.db, verbInput(), created + 3);
+  return services;
+}
+
+/** A deck where only Küche's production card is due. */
+async function kuecheDue(clock: { t: number }) {
+  const services = await deck(clock);
+  setSetting(services.db, 'study.newItemsBase', 0);
+  const kueche = services.db
+    .select()
+    .from(card)
+    .all()
+    .find((c) => c.itemId === 2 && c.type === 'produce')!;
+  services.db
+    .update(card)
+    .set({
+      state: 2,
+      stability: 10,
+      difficulty: 5,
+      due: clock.t - DAY,
+      lastReview: clock.t - 10 * DAY,
+      reps: 3,
+      scheduledDays: 9,
+    })
+    .where(eq(card.id, kueche.id))
+    .run();
   return services;
 }
 
@@ -84,27 +110,7 @@ describe('Study screen', () => {
 
   it('grades typed answers, with umlaut slips rated Hard, and ends with a summary', async () => {
     const clock = { t: new Date(2026, 9, 19, 9).getTime() };
-    const services = await deck(clock);
-    setSetting(services.db, 'study.newItemsBase', 0);
-    // Küche's production card is due for review.
-    const kueche = services.db
-      .select()
-      .from(card)
-      .all()
-      .find((c) => c.itemId === 2 && c.type === 'produce')!;
-    services.db
-      .update(card)
-      .set({
-        state: 2,
-        stability: 10,
-        difficulty: 5,
-        due: clock.t - DAY,
-        lastReview: clock.t - 10 * DAY,
-        reps: 3,
-        scheduledDays: 9,
-      })
-      .where(eq(card.id, kueche.id))
-      .run();
+    const services = await kuecheDue(clock);
     await render(services);
 
     expect(await screen.findByText(/Say it in German/)).toBeOnTheScreen();
@@ -122,6 +128,25 @@ describe('Study screen', () => {
     const [session] = services.db.select().from(studySession).all();
     expect(session).toMatchObject({ cardsDone: 1, newItems: 0, accuracy: 1 });
     expect(session.endedAt).not.toBeNull();
+  });
+
+  it("plans the reminders again when a session ends, without today's", async () => {
+    const clock = { t: new Date(2026, 9, 19, 9).getTime() };
+    const services = await kuecheDue(clock);
+    setSetting(services.db, 'ui.reminderEnabled', true);
+    await render(services);
+
+    await fireEvent.changeText(await screen.findByLabelText('Your answer'), 'die Küche');
+    await fireEvent.press(screen.getByRole('button', { name: 'Check' }));
+    await fireEvent.press(await screen.findByRole('button', { name: 'Continue' }));
+    expect(await screen.findByTestId('study-summary')).toBeOnTheScreen();
+
+    await waitFor(async () =>
+      expect(await Notifications.getAllScheduledNotificationsAsync()).toHaveLength(7),
+    );
+    const [first] = await Notifications.getAllScheduledNotificationsAsync();
+    expect(first.content.body).toBe('Keep your streak going: make it 2 days in a row.');
+    expect(first.trigger).toMatchObject({ date: new Date(2026, 9, 20, 19) });
   });
 
   it('asks gender, plural and verb forms for cards unlocked the day after', async () => {

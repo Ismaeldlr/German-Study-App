@@ -9,6 +9,7 @@ import { AppText } from '@/ui/AppText';
 import { Button } from '@/ui/Button';
 import { ListItem, StatePill, SwitchRow } from '@/ui/controls';
 import { Row, Screen, Section } from '@/ui/layout';
+import { Lemma } from '@/ui/visuals';
 
 import { useServices } from '../services';
 import { useLiveQuery } from '../use-live-query';
@@ -69,9 +70,7 @@ export function ItemDetailScreen({ itemId }: { itemId: number }) {
     <Screen testID="item-detail">
       <Stack.Screen options={{ title: grammar ? 'Grammar point' : 'Word' }} />
       <View style={{ gap: 4 }}>
-        <AppText variant="title" testID="item-title">
-          {displayLemma(item)}
-        </AppText>
+        <Lemma item={item} variant="display" testID="item-title" />
         <Row>
           <AppText variant="caption">
             {item.kind}
@@ -82,7 +81,7 @@ export function ItemDetailScreen({ itemId }: { itemId: number }) {
         </Row>
       </View>
 
-      <Section title={grammar ? 'In short' : 'Meaning'}>
+      <Section title={grammar ? 'In short' : 'Meaning'} icon="💬">
         <AppText testID="item-meanings">{item.meanings.join('; ')}</AppText>
         {/* A grammar point's examples are listed under its rule. */}
         {item.exampleDe && !grammar ? (
