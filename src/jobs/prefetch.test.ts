@@ -93,18 +93,19 @@ describe('prefetch', () => {
     ).toEqual([...ids].sort());
 
     const report = await runPrefetch(s);
-    expect(report).toMatchObject({ generated: 3, rejected: 0, stoppedBy: null });
+    expect(report).toMatchObject({ generated: 3, rejected: 0, stories: 1, stoppedBy: null });
     expect(unusedGapCount(s.db)).toBe(3);
-    expect(monthToDate(s.db, NOW).calls).toBe(1);
+    // One call for the gap batch, one for the day's story.
+    expect(monthToDate(s.db, NOW).calls).toBe(2);
     expect(monthToDate(s.db, NOW).cost).toBeGreaterThan(0);
 
     const cached = nextGapExercise(s.db, ids[1])!;
     expect(cached.payload.sentence).toContain(BLANK);
     expect(cached.payload.answer).toBe('umziehen');
-    // Every target is covered, so a second run has nothing to do.
+    // Every target is covered and a story is waiting, so a second run has nothing to do.
     expect(gapTargets(s.db, NOW)).toEqual([]);
     expect((await runPrefetch(s)).generated).toBe(0);
-    expect(monthToDate(s.db, NOW).calls).toBe(1);
+    expect(monthToDate(s.db, NOW).calls).toBe(2);
   });
 
   it('never caches a sentence the card saw within its last five exercises', async () => {
@@ -183,6 +184,7 @@ describe('prefetch', () => {
     await runPrefetch(s);
     expect(exerciseStats(s.db)).toEqual([
       { mode: 'gap_fill', promptVersion: 'gen_gap_batch@1', ready: 3, used: 0, discarded: 0 },
+      { mode: 'story', promptVersion: 'gen_story@1', ready: 1, used: 0, discarded: 0 },
     ]);
   });
 });

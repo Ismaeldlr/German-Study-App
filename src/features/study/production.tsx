@@ -22,9 +22,9 @@ export interface DrillDone {
 }
 
 /**
- * A grammar drill or contrast set: short gap items one at a time, each
- * checked as you go with a one-line explanation. The set is rated as a
- * whole when you finish.
+ * A grammar drill, contrast set or a story's questions: short gap items one
+ * at a time, each checked as you go with a one-line explanation. The set is
+ * rated as a whole when you finish.
  */
 export function DrillQuestion({
   label,
@@ -32,12 +32,16 @@ export function DrillQuestion({
   items,
   onDone,
   onBad,
+  grade = gradeDrillItem,
 }: {
   label: string;
   title: string;
   items: DrillItem[];
   onDone: (done: DrillDone) => void;
-  onBad: () => void;
+  /** Throws the exercise out; without it there is no button for that. */
+  onBad?: () => void;
+  /** How an answer is checked, when not like a drill item. */
+  grade?: (item: DrillItem, given: string, index: number) => ItemResult;
 }) {
   const theme = useTheme();
   const [index, setIndex] = useState(0);
@@ -50,9 +54,10 @@ export function DrillQuestion({
   const { before, after } = splitGap(item.sentence);
 
   const check = (given: string) => {
-    setResults([...results, gradeDrillItem(item, given)]);
+    setResults([...results, grade(item, given, index)]);
     setAnswers([...answers, given]);
   };
+  const explanation = result?.mistake?.explanation || item.explanation;
   const advance = () => {
     if (last) {
       onDone({ results, answers });
@@ -135,12 +140,11 @@ export function DrillQuestion({
                   You wrote: {answers[index]}
                 </AppText>
               ) : null}
-              <AppText variant="caption" color={color}>
-                {result.mistake?.category === 'spelling' ||
-                result.mistake?.category === 'capitalization'
-                  ? result.mistake.explanation
-                  : item.explanation}
-              </AppText>
+              {explanation ? (
+                <AppText variant="caption" color={color}>
+                  {explanation}
+                </AppText>
+              ) : null}
               {item.translation ? (
                 <AppText variant="caption" color={color}>
                   {item.translation}
@@ -187,7 +191,7 @@ export function DrillQuestion({
               onPress={() => check('')}
             />
           </Row>
-          {index === 0 ? (
+          {index === 0 && onBad ? (
             <Button
               testID="drill-bad"
               variant="ghost"

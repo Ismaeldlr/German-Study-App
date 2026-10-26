@@ -43,7 +43,7 @@ export function ProgressScreen() {
   const theme = useTheme();
   const report = useLiveQuery(
     () => progressReport(db, now()),
-    ['review', 'item', 'card', 'session'],
+    ['review', 'item', 'card', 'session', 'chat'],
   );
   const goal = useLiveQuery(() => getSetting(db, 'study.dailyGoalXp'), ['settings']);
   const leeches = useLiveQuery(() => listLeeches(db).length, ['card', 'item']);

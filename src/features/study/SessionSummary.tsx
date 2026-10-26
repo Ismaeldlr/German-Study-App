@@ -55,7 +55,7 @@ export function SessionSummary({
   const { db, now } = useServices();
   const report = useLiveQuery(
     () => progressReport(db, now()),
-    ['review', 'session', 'item', 'card'],
+    ['review', 'session', 'item', 'card', 'chat'],
   );
   const goal = getSetting(db, 'study.dailyGoalXp');
   const nothingLeft = useLiveQuery(() => todayQueue(db, now()).length === 0, ['review', 'card']);

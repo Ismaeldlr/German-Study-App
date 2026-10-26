@@ -1,6 +1,7 @@
 import { and, count, eq, gte, ne, sql } from 'drizzle-orm';
 
 import type { ItemState } from '@/core/cards';
+import { XP_PER_CHAT_MESSAGE } from '@/core/chat';
 import {
   achievementStates,
   levelFor,
@@ -15,10 +16,11 @@ import { localDay } from '@/core/time';
 
 import type { DbOrTx } from '../db';
 import { item, review, studySession } from '../schema';
+import { chatMessageTimes } from './chats';
 import { listDeck } from './items';
 
 /**
- * Progress read straight from the review log: XP per day, the streak, the
+ * Progress read straight from the review log and your chat messages: XP per day, the streak, the
  * level and the badges. Nothing is stored, so a restored backup brings the
  * whole history back with it.
  */
@@ -31,7 +33,7 @@ export interface DayActivity {
 const localDayOf = sql<string>`strftime('%Y-%m-%d', ${review.reviewedAt} / 1000, 'unixepoch', 'localtime')`;
 const localHour = sql`cast(strftime('%H', ${review.reviewedAt} / 1000, 'unixepoch', 'localtime') as integer)`;
 
-/** Reviews and XP for every local day you studied. */
+/** Reviews and XP for every local day you studied. Chat messages earn XP too. */
 export function activityByDay(db: DbOrTx): Map<string, DayActivity> {
   const recalled = sql<number>`(${review.rating} >= 2)`;
   const rows = db
@@ -40,12 +42,17 @@ export function activityByDay(db: DbOrTx): Map<string, DayActivity> {
     .groupBy(localDayOf, review.mode, recalled)
     .all();
   const days = new Map<string, DayActivity>();
+  const dayOf = (key: string) => {
+    const day = days.get(key) ?? { reviews: 0, xp: 0 };
+    days.set(key, day);
+    return day;
+  };
   for (const row of rows) {
-    const day = days.get(row.day) ?? { reviews: 0, xp: 0 };
+    const day = dayOf(row.day);
     day.reviews += row.n;
     day.xp += row.n * xpFor(row.mode, row.recalled ? 2 : 1);
-    days.set(row.day, day);
   }
+  for (const at of chatMessageTimes(db)) dayOf(localDay(new Date(at))).xp += XP_PER_CHAT_MESSAGE;
   return days;
 }
 

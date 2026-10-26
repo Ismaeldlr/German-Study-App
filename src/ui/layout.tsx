@@ -125,8 +125,20 @@ export function Section({
   );
 }
 
-export function Row({ children, style }: { children: ReactNode; style?: ViewStyle }) {
-  return <View style={[styles.row, style]}>{children}</View>;
+export function Row({
+  children,
+  style,
+  testID,
+}: {
+  children: ReactNode;
+  style?: ViewStyle;
+  testID?: string;
+}) {
+  return (
+    <View testID={testID} style={[styles.row, style]}>
+      {children}
+    </View>
+  );
 }
 
 type BannerTone = 'info' | 'warning' | 'error' | 'success';

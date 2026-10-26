@@ -11,20 +11,34 @@ import {
   type DrillItem,
 } from '@/core/drills';
 import { lemmaKey } from '@/core/duplicates';
-import { gapProblem, isFresh, sentenceHash, type GapExercise } from '@/core/gap-fill';
+import { gapProblem, glossKey, isFresh, sentenceHash, type GapExercise } from '@/core/gap-fill';
 import { isFormOf } from '@/core/inflection';
 import { batches } from '@/core/parse-list';
 import { buildGapBundles, type GapBundle, type GapTarget } from '@/core/selector';
+import {
+  STORY_MAX_QUESTIONS,
+  STORY_MAX_WORDS,
+  STORY_MIN_QUESTIONS,
+  STORY_MIN_TARGETS,
+  STORY_MIN_WORDS,
+  textKeys,
+  wordCount,
+  type StoryExercise,
+  type StoryQuestion,
+} from '@/core/story';
+import { startOfLocalDay } from '@/core/time';
 import { createTopicPicker } from '@/core/topics';
 import { translationProblem, type TranslationExercise } from '@/core/translation';
 import type { DbOrTx } from '@/data/db';
 import { getChapter } from '@/data/repos/chapters';
 import {
+  nextStory,
   pruneUnusedFor,
   recentHashes,
   saveExercises,
   saveGapExercises,
   unusedExercises,
+  writtenSince,
   type GenerationInfo,
   type NewExerciseRow,
   type NewGapRow,
@@ -42,7 +56,9 @@ import {
   gapTargets,
   supportPool,
   translationTargets,
+  storyCandidates,
   type DrillTarget,
+  type StoryCandidate,
 } from '@/data/repos/practice';
 import { getAllSettings } from '@/data/repos/settings';
 import { dailyAllowance, newItemsIntroducedToday } from '@/data/repos/study';
@@ -55,6 +71,7 @@ import { genContrast } from '@/llm/tasks/gen-contrast';
 import { genGapBatch, type GenGapItem } from '@/llm/tasks/gen-gap-batch';
 import { genGrammarDrill, type GenDrillOutput } from '@/llm/tasks/gen-grammar-drill';
 import { genTranslation, type GenTranslationItem } from '@/llm/tasks/gen-translation';
+import { genStory, type GenStoryOutput } from '@/llm/tasks/gen-story';
 import { leechHelp } from '@/llm/tasks/leech-help';
 import { runTask, type LlmTask, type TaskResult } from '@/llm/tasks/task';
 
@@ -65,9 +82,10 @@ import { requestSuggestions, shouldAutoSuggest } from './suggest';
  * Tops up the exercise cache while online. First it grades translations
  * waiting in the queue; then it writes gap sentences for cards due today
  * or tomorrow and for at-risk cards, translations for mature cards, drills
- * for grammar points, contrast sets for words you mix up, and memory hooks
- * for leeches. Over the budget cap, without a key or offline, it stops and
- * the app keeps working from the cache and classic cards.
+ * for grammar points, contrast sets for words you mix up, memory hooks
+ * for leeches, and one mini story a day. Over the budget cap, without a key
+ * or offline, it stops and the app keeps working from the cache and classic
+ * cards.
  */
 
 export const GAP_BATCH_SIZE = 10;
@@ -91,6 +109,7 @@ export interface PrefetchReport {
   drills: number;
   contrasts: number;
   hooks: number;
+  stories: number;
   graded: number;
   suggestions: number;
   /** Why the run stopped early, in words for the usage screen. */
@@ -132,6 +151,7 @@ async function prefetch(
     drills: 0,
     contrasts: 0,
     hooks: 0,
+    stories: 0,
     graded: 0,
     suggestions: 0,
     stoppedBy: null,
@@ -208,6 +228,13 @@ async function prefetch(
       });
     }
 
+    if (needsStory(db, now)) {
+      await attempt(async () => {
+        if (await writeStory(context, now)) report.stories++;
+        else report.rejected++;
+      });
+    }
+
     const allowanceLeft = dailyAllowance(db, now) - newItemsIntroducedToday(db, now);
     if (shouldAutoSuggest(db, now, allowanceLeft)) {
       await attempt(async () => {
@@ -250,7 +277,8 @@ function info(context: RunContext, result: TaskResult<unknown>): GenerationInfo 
   };
 }
 
-function topicPicker(db: DbOrTx) {
+/** Topics from the current chapter's themes and your interests, never the same twice in a row. */
+export function topicPicker(db: DbOrTx) {
   const settings = getAllSettings(db);
   const chapterId = settings['study.currentChapterId'];
   const chapter = chapterId ? getChapter(db, chapterId) : undefined;
@@ -615,4 +643,122 @@ function formsLine(row: ItemRow): string | null {
     return `${row.verbPresent3}, ${row.verbPreterite}, ${aux} ${row.verbParticiple}`;
   }
   return null;
+}
+
+/**
+ * One story a day: write one when none is waiting, none was written today,
+ * and enough of your words are in review to build it around.
+ */
+export function needsStory(db: DbOrTx, now: Date): boolean {
+  return (
+    !nextStory(db) &&
+    writtenSince(db, 'story', startOfLocalDay(now)) === 0 &&
+    storyCandidates(db, now).length >= STORY_MIN_TARGETS
+  );
+}
+
+/** Write a story right away, for the Practice section. Throws an LlmError when it cannot. */
+export async function writeStoryNow(services: Services, signal?: AbortSignal): Promise<boolean> {
+  const client = await getLlmClient(services);
+  const context: RunContext = { services, client, signal, topic: topicPicker(services.db) };
+  return writeStory(context, services.now());
+}
+
+async function writeStory(context: RunContext, now: Date): Promise<boolean> {
+  const { db } = context.services;
+  const candidates = storyCandidates(db, now);
+  if (candidates.length < STORY_MIN_TARGETS) return false;
+  const chosen = new Set(candidates.map((c) => c.itemId));
+  const known = supportPool(db, now)
+    .filter((w) => !chosen.has(w.itemId))
+    .map((w) => w.word)
+    .slice(0, 30);
+  const topic = context.topic();
+  const result = await run(
+    context,
+    genStory,
+    {
+      targets: candidates.map((c, i) => ({
+        id: i + 1,
+        word: c.word,
+        type: c.kind,
+        meaning: c.meaning,
+      })),
+      topic,
+      known,
+    },
+    90_000,
+  );
+  const story = acceptStory(candidates, result.output);
+  if (!story) return false;
+  saveExercises(
+    db,
+    'story',
+    [
+      {
+        itemIds: story.targets.map((t) => t.itemId),
+        topic,
+        payload: story,
+        hash: sentenceHash(story.text),
+      },
+    ],
+    info(context, result),
+    context.services.now().getTime(),
+  );
+  return true;
+}
+
+/**
+ * Keep the deck words that really stand in the text, in forms that are
+ * theirs, and the questions that fill their gap with a form of their word,
+ * one per word. The story is kept while enough of both remain.
+ */
+export function acceptStory(
+  candidates: readonly StoryCandidate[],
+  output: GenStoryOutput,
+): StoryExercise | null {
+  const text = output.text.replace(/\r\n/g, '\n').trim();
+  const words = wordCount(text);
+  if (words < STORY_MIN_WORDS || words > STORY_MAX_WORDS) return null;
+  const inText = textKeys(text);
+  const kept = candidates.flatMap((candidate, i) => {
+    const listed = output.targets.find((t) => t.id === i + 1)?.forms ?? [];
+    const forms = [
+      ...new Set(
+        listed
+          .map((f) => f.trim())
+          .filter((f) => f && inText.has(glossKey(f)) && isFormOf(f, candidate.source)),
+      ),
+    ];
+    return forms.length ? [{ id: i + 1, candidate, forms }] : [];
+  });
+  if (kept.length < Math.min(STORY_MIN_TARGETS, candidates.length)) return null;
+
+  const questions: StoryQuestion[] = [];
+  for (const raw of output.questions) {
+    const target = kept.findIndex((k) => k.id === raw.target);
+    if (target < 0 || questions.some((q) => q.target === target)) continue;
+    const question: StoryQuestion = {
+      target,
+      sentence: raw.sentence.trim(),
+      answer: raw.answer.trim(),
+      accepted: raw.accepted.map((a) => a.trim()).filter(Boolean),
+      cue: raw.cue.trim(),
+      translation: raw.translation.trim(),
+      glosses: [],
+    };
+    if (gapProblem(question, kept[target].candidate.source)) continue;
+    questions.push(question);
+  }
+  if (questions.length < Math.min(STORY_MIN_QUESTIONS, kept.length)) return null;
+
+  return {
+    title: output.title.trim(),
+    text,
+    glosses: output.glosses
+      .map((g) => ({ de: g.de.trim(), en: g.en.trim() }))
+      .filter((g) => g.de && g.en),
+    targets: kept.map(({ candidate: { source: _, ...target }, forms }) => ({ ...target, forms })),
+    questions: questions.slice(0, STORY_MAX_QUESTIONS),
+  };
 }

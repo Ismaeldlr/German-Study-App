@@ -19,5 +19,6 @@ export async function getLlmClient(services: Services): Promise<LlmClient> {
     recorder: createUsageRecorder(services.db),
     budget: createBudgetGuard(services.db, services.now),
     fetch: services.fetch,
+    now: services.now,
   });
 }

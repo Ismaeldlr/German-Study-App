@@ -2,12 +2,14 @@ import { create } from 'zustand';
 
 import type { SlipKind } from '@/core/answers';
 import type { ContrastSet, GrammarDrill } from '@/core/drills';
+import type { FinisherKind } from '@/core/finisher';
 import type { GapExercise, GapHint } from '@/core/gap-fill';
 import type { MistakeNote } from '@/core/grading';
 import type { CardType } from '@/core/model';
 import type { QueueEntry } from '@/core/queue';
 import type { Grade } from '@/core/rating';
 import {
+  addRatings,
   deferAnswer,
   dropCards,
   nextEntry,
@@ -24,7 +26,8 @@ import type { TranslationExercise, TranslationGrade } from '@/core/translation';
  * store only remembers where in the session you are.
  */
 
-export type Phase = 'idle' | 'empty' | 'intro' | 'question' | 'grading' | 'feedback' | 'done';
+export type Phase =
+  'idle' | 'empty' | 'intro' | 'question' | 'grading' | 'feedback' | 'finisher' | 'done';
 
 /**
  * How the current card is asked: as a classic card, or with a cached
@@ -86,6 +89,13 @@ export interface Baseline {
   badges: string[];
 }
 
+/** What the finisher adds to the session. */
+export interface FinisherOutcome {
+  ratings: number[];
+  xp: number;
+  mistakes: SessionMistake[];
+}
+
 interface StudyStore {
   sessionId: number | null;
   /** Local day the session started, so an unfinished one is not resumed tomorrow. */
@@ -105,6 +115,8 @@ interface StudyStore {
   combo: number;
   bestCombo: number;
   baseline: Baseline | null;
+  /** The finishers to offer once the cards are done, best first; empty on other days. */
+  finisher: FinisherKind[];
   present: (entry: QueueEntry) => Presentation;
   begin(
     sessionId: number,
@@ -114,6 +126,7 @@ interface StudyStore {
       deadline?: number | null;
       present?: (entry: QueueEntry) => Presentation;
       baseline?: Baseline | null;
+      finisher?: FinisherKind[];
     },
   ): void;
   empty(): void;
@@ -133,6 +146,9 @@ interface StudyStore {
    * grade rates them all once it lands.
    */
   deferred(feedback: Feedback): void;
+  /** The finisher is over: its ratings, XP and mistakes join the session, which ends. */
+  finisherDone(outcome: FinisherOutcome): void;
+  /** End now, finisher or not: the Stop button, or skipping the finisher. */
   finish(): void;
   reset(): void;
 }
@@ -152,6 +168,7 @@ const initial = {
   combo: 0,
   bestCombo: 0,
   baseline: null,
+  finisher: [] as FinisherKind[],
   present: () => CLASSIC,
 };
 
@@ -165,6 +182,7 @@ export const useStudyStore = create<StudyStore>((set, get) => ({
       session: startSession(queue, options.deadline ?? null),
       present: options.present ?? (() => CLASSIC),
       baseline: options.baseline ?? null,
+      finisher: options.finisher ?? [],
     });
     get().next(now);
   },
@@ -178,7 +196,13 @@ export const useStudyStore = create<StudyStore>((set, get) => ({
     for (;;) {
       const step = nextEntry(session, now);
       if (!step.entry) {
-        set({ session: step.state, entry: null, feedback: null, gradingId: null, phase: 'done' });
+        set({
+          session: step.state,
+          entry: null,
+          feedback: null,
+          gradingId: null,
+          phase: get().finisher.length ? 'finisher' : 'done',
+        });
         return;
       }
       const presentation = present(step.entry);
@@ -254,8 +278,19 @@ export const useStudyStore = create<StudyStore>((set, get) => ({
       phase: 'feedback',
     });
   },
+  finisherDone({ ratings, xp, mistakes }) {
+    const { session } = get();
+    if (!session) return;
+    set({
+      session: addRatings(session, ratings),
+      xp: get().xp + xp,
+      mistakes: [...get().mistakes, ...mistakes],
+      finisher: [],
+      phase: 'done',
+    });
+  },
   finish() {
-    set({ phase: 'done', entry: null, feedback: null, gradingId: null });
+    set({ phase: 'done', entry: null, feedback: null, gradingId: null, finisher: [] });
   },
   reset() {
     set(initial);

@@ -135,6 +135,7 @@ function describeTopUp(report: PrefetchReport): string {
   if (report.drills) parts.push(plural(report.drills, 'grammar drill'));
   if (report.contrasts) parts.push(plural(report.contrasts, 'contrast set'));
   if (report.hooks) parts.push(plural(report.hooks, 'memory hook'));
+  if (report.stories) parts.push(plural(report.stories, 'story', 'stories'));
   if (report.rejected) parts.push(`${report.rejected} rejected`);
   if (report.suggestions) parts.push(plural(report.suggestions, 'suggestion'));
   if (report.stoppedBy) {

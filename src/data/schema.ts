@@ -21,9 +21,9 @@ import {
   MISTAKE_CATEGORIES,
   SUGGESTION_STATUSES,
   type Example,
-  type ChatMessage,
   type MistakeCategory,
 } from '../core/model';
+import { CHAT_TURNS, type ChatMessage, type ChatResult, type ChatTarget } from '../core/chat';
 import type { DraftFields, DraftFlag } from '../core/drafts';
 import type { TranslationExercise, TranslationGrade } from '../core/translation';
 
@@ -256,7 +256,13 @@ export const studySession = sqliteTable('session', {
 
 export const chat = sqliteTable('chat', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  /** The scenario's short German title. */
   scenario: text('scenario').notNull(),
+  /** Who the character is, in English. */
+  character: text('character').notNull().default(''),
+  /** Who you are and what you want, in English. */
+  situation: text('situation').notNull().default(''),
+  topic: text('topic'),
   messages: text('messages', { mode: 'json' })
     .$type<ChatMessage[]>()
     .notNull()
@@ -265,7 +271,18 @@ export const chat = sqliteTable('chat', {
     .$type<number[]>()
     .notNull()
     .default(sql`'[]'`),
+  /** The target words as they were when the chat began, so rating never depends on the deck. */
+  targets: text('targets', { mode: 'json' })
+    .$type<ChatTarget[]>()
+    .notNull()
+    .default(sql`'[]'`),
+  /** How many messages of yours the chat runs to. */
+  maxTurns: integer('max_turns').notNull().default(CHAT_TURNS),
+  /** The rolling summary of everything before the latest turns. */
   summary: text('summary'),
+  /** The end summary and each target word's rating. */
+  result: text('result', { mode: 'json' }).$type<ChatResult>(),
+  endedAt: integer('ended_at'),
   createdAt: integer('created_at').notNull().$defaultFn(now),
   updatedAt: integer('updated_at').notNull().$defaultFn(now),
 });

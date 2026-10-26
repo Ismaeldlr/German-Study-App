@@ -1,14 +1,16 @@
 import { and, eq } from 'drizzle-orm';
 
 import { CardState, displayLemma } from '@/core/cards';
+import { CHAT_TARGETS, type ChatTarget } from '@/core/chat';
 import type { Example, MistakeCategory } from '@/core/model';
 import { isAtRisk, practiceMode } from '@/core/planner';
 import { createScheduler } from '@/core/scheduler';
 import type { GapTarget, SupportWord } from '@/core/selector';
-import { DAY_MS, endOfLocalDay } from '@/core/time';
+import { STORY_TARGETS, type StoryTarget } from '@/core/story';
+import { DAY_MS, endOfLocalDay, startOfLocalDay } from '@/core/time';
 
 import type { DbOrTx } from '../db';
-import { card, grammarNote, item } from '../schema';
+import { card, grammarNote, item, type ItemRow } from '../schema';
 import { coverage, gapCoverage } from './exercises';
 import { getSetting } from './settings';
 import { waitingCardIds } from './study';
@@ -135,5 +137,69 @@ export function drillTargets(db: DbOrTx, now: Date): DrillTarget[] {
       summary: r.note?.ruleSummary ?? r.item.meanings.join('; '),
       examples: r.note?.examples ?? [],
       categories: r.note?.categories ?? [],
+    }));
+}
+
+/** A deck word a new story could be built around, with the item to check its forms against. */
+export type StoryCandidate = Omit<StoryTarget, 'forms'> & { source: ItemRow };
+
+/**
+ * Words for a story: ones you have met and recognise (their recognition
+ * card is in review). Words not due by the end of tomorrow go first, since
+ * the story is their only refresher for now; then the current chapter's,
+ * then the soonest due.
+ */
+export function storyCandidates(db: DbOrTx, now: Date, limit = STORY_TARGETS): StoryCandidate[] {
+  const horizon = endOfLocalDay(new Date(now.getTime() + DAY_MS));
+  const chapterId = getSetting(db, 'study.currentChapterId');
+  const rows = activeCards(db).filter((r) => r.item.kind !== 'grammar');
+  const produce = new Map(
+    rows.filter((r) => r.card.type === 'produce').map((r) => [r.item.id, r.card.id]),
+  );
+  const rank = (r: (typeof rows)[number]) =>
+    (r.card.due <= horizon ? 2 : 0) +
+    (chapterId !== null && r.item.chapterId === chapterId ? 0 : 1);
+  return rows
+    .filter((r) => r.card.type === 'recognize' && r.card.state === CardState.Review)
+    .sort((a, b) => rank(a) - rank(b) || a.card.due - b.card.due || a.card.id - b.card.id)
+    .slice(0, limit)
+    .map(({ card: c, item: i }) => ({
+      itemId: i.id,
+      recognizeCardId: c.id,
+      produceCardId: produce.get(i.id) ?? null,
+      word: displayLemma(i),
+      meaning: i.meanings.slice(0, 2).join(', '),
+      kind: i.kind,
+      source: i,
+    }));
+}
+
+/**
+ * Words a chat steers toward: production cards in review that you have not
+ * reviewed today and that are not waiting for a grade, so a chat never
+ * rates a card twice in a day. The current chapter's come first, then the
+ * soonest due.
+ */
+export function chatTargets(db: DbOrTx, now: Date, limit = CHAT_TARGETS): ChatTarget[] {
+  const today = startOfLocalDay(now);
+  const chapterId = getSetting(db, 'study.currentChapterId');
+  const waiting = waitingCardIds(db);
+  const rank = (i: ItemRow) => (chapterId !== null && i.chapterId === chapterId ? 0 : 1);
+  return activeCards(db)
+    .filter(
+      (r) =>
+        r.card.type === 'produce' &&
+        r.item.kind !== 'grammar' &&
+        r.card.state === CardState.Review &&
+        (r.card.lastReview ?? 0) < today &&
+        !waiting.has(r.card.id),
+    )
+    .sort((a, b) => rank(a.item) - rank(b.item) || a.card.due - b.card.due || a.card.id - b.card.id)
+    .slice(0, limit)
+    .map(({ card: c, item: i }) => ({
+      cardId: c.id,
+      itemId: i.id,
+      word: displayLemma(i),
+      meaning: i.meanings.slice(0, 2).join(', '),
     }));
 }
