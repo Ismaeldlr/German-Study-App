@@ -119,6 +119,8 @@ export default function RootLayout() {
               <Stack.Screen name="weak-spots" options={{ title: 'Weak spots' }} />
               <Stack.Screen name="leeches" options={{ title: 'Leeches' }} />
               <Stack.Screen name="graded" options={{ title: 'Graded translations' }} />
+              <Stack.Screen name="story" options={{ title: 'Mini story' }} />
+              <Stack.Screen name="chat" options={{ title: 'Chat' }} />
             </Stack>
           </UmlautProvider>
         </ThemeProvider>
