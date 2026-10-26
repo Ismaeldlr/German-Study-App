@@ -91,9 +91,18 @@ export function Button({
                 {icon ? (
                   <Ionicons name={icon} size={size === 'large' ? 22 : 18} color={colors.text} />
                 ) : null}
+                {/* Without an icon the label spans the button. Shrink-wrapped, Android can
+                    measure it a hair narrower than it draws and push the last word onto
+                    a line the button has no room for: "flat," instead of "flat, apartment". */}
                 <AppText
                   variant={size === 'large' ? 'heading' : 'label'}
-                  style={{ color: colors.text, textAlign: 'center', flexShrink: 1 }}
+                  textBreakStrategy="simple"
+                  style={{
+                    color: colors.text,
+                    textAlign: 'center',
+                    flexShrink: 1,
+                    flexGrow: icon ? 0 : 1,
+                  }}
                 >
                   {label}
                 </AppText>
