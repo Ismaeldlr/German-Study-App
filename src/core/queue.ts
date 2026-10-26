@@ -12,6 +12,8 @@ import { practiceMode, type PracticeMode } from './planner';
  * 5. The rest: more due classic cards, mature cards past the translation
  *    cap, then other newly unlocked cards.
  * 6. New items up to today's allowance, each introduced first.
+ * In cram mode, the cards an exam needs today join in as if due, and the
+ * exam's new words come first and do not stop at the allowance.
  * A new word starts with its recognition card; its gender, plural and
  * production cards unlock the next day, so you meet a word before you are
  * asked to produce it. A grammar card is only queued with a drill ready,
@@ -53,6 +55,8 @@ export interface QueueOptions {
   pullForward?: ReadonlySet<number>;
   /** Cards whose answer is waiting to be graded. */
   excludeCardIds?: ReadonlySet<number>;
+  /** Cram mode's picks for today: cards to pull forward, new cards to introduce. */
+  cram?: { pull: ReadonlySet<number>; introduce: ReadonlySet<number> };
 }
 
 export const SIBLING_CAP = 20;
@@ -76,9 +80,14 @@ export function buildQueue(
   );
   const byAge = (a: QueueCandidate, b: QueueCandidate) =>
     a.itemCreatedAt - b.itemCreatedAt || a.cardId - b.cardId;
+  const pull = options.cram?.pull ?? new Set<number>();
+  const introduce = options.cram?.introduce ?? new Set<number>();
+  // Crammed cards first, then the others in their usual order.
+  const crammedFirst = (a: QueueCandidate, b: QueueCandidate) =>
+    Number(introduce.has(b.cardId)) - Number(introduce.has(a.cardId)) || byAge(a, b);
 
   const due = cards
-    .filter((c) => c.state !== CardState.New && c.due <= options.now)
+    .filter((c) => c.state !== CardState.New && (c.due <= options.now || pull.has(c.cardId)))
     .sort((a, b) => a.due - b.due || a.cardId - b.cardId)
     .map((c) => entry(c, 'review'));
 
@@ -94,6 +103,7 @@ export function buildQueue(
     .slice(0, 1)
     .map((c) => entry(c, 'review'));
 
+  const siblingCap = Math.max(0, options.siblingCap ?? SIBLING_CAP);
   const siblings = cards
     .filter(
       (c) =>
@@ -101,14 +111,14 @@ export function buildQueue(
         !FIRST_CARDS.has(c.type) &&
         options.unlockedItemIds.has(c.itemId),
     )
-    .sort(byAge)
-    .slice(0, Math.max(0, options.siblingCap ?? SIBLING_CAP))
+    .sort(crammedFirst)
+    .filter((c, i) => introduce.has(c.cardId) || i < siblingCap)
     .map((c) => entry(c, 'new_card'));
 
   const newItems = cards
     .filter((c) => c.state === CardState.New && FIRST_CARDS.has(c.type))
-    .sort(byAge)
-    .slice(0, Math.max(0, options.newItemsAllowance))
+    .sort(crammedFirst)
+    .filter((c, i) => introduce.has(c.cardId) || i < options.newItemsAllowance)
     .map((c) => entry(c, 'new_item'));
 
   const dueClassic = due.filter((e) => e.mode === 'classic');

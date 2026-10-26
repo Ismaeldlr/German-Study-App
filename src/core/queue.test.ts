@@ -272,6 +272,53 @@ describe('daily queue: production and grammar', () => {
   });
 });
 
+describe('daily queue: cram mode', () => {
+  it('asks pulled cards as if due, after the cards that really are', () => {
+    const cards = [
+      card({ itemId: 1, state: CardState.Review, due: now + 3 * 24 * HOUR }),
+      card({ itemId: 2, state: CardState.Review, due: now - HOUR }),
+      card({ itemId: 3, state: CardState.Review, due: now + 9 * 24 * HOUR }),
+    ];
+    const queue = buildQueue(cards, {
+      now,
+      newItemsAllowance: 0,
+      unlockedItemIds: new Set(),
+      cram: { pull: new Set([cards[0].cardId]), introduce: new Set() },
+    });
+    expect(queue.map((e) => [e.itemId, e.kind])).toEqual([
+      [2, 'review'],
+      [1, 'review'],
+    ]);
+  });
+
+  it("introduces the exam's new words first, past the allowance", () => {
+    const cards = [1, 2, 3, 4].map((i) => card({ itemId: i, itemCreatedAt: i }));
+    const cram = {
+      pull: new Set<number>(),
+      introduce: new Set([cards[2].cardId, cards[3].cardId]),
+    };
+    const queue = (allowance: number) =>
+      buildQueue(cards, { now, newItemsAllowance: allowance, unlockedItemIds: new Set(), cram });
+    // Crammed words use up the allowance first.
+    expect(queue(3).map((e) => e.itemId)).toEqual([3, 4, 1]);
+    expect(queue(0).map((e) => e.itemId)).toEqual([3, 4]);
+  });
+
+  it('lets crammed sibling cards past the daily cap', () => {
+    const cards = [1, 2, 3].map((i) => card({ itemId: i, type: 'gender', itemCreatedAt: i }));
+    const queue = (siblingCap: number) =>
+      buildQueue(cards, {
+        now,
+        newItemsAllowance: 0,
+        unlockedItemIds: new Set([1, 2, 3]),
+        siblingCap,
+        cram: { pull: new Set(), introduce: new Set([cards[2].cardId]) },
+      }).map((e) => e.itemId);
+    expect(queue(0)).toEqual([3]);
+    expect(queue(2)).toEqual([3, 1]);
+  });
+});
+
 describe('session', () => {
   const a = {
     cardId: 1,

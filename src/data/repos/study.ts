@@ -2,6 +2,7 @@ import { and, desc, eq, gte, inArray, lt, ne, notInArray, sql } from 'drizzle-or
 
 import { CardState, displayLemma } from '@/core/cards';
 import type { MistakeNote } from '@/core/grading';
+import { cramPicks, cramRecall, type CramPicks } from '@/core/cram';
 import { confusedWith, isLeechLapse } from '@/core/leeches';
 import type { CardType, ExerciseMode, MistakeCategory } from '@/core/model';
 import { newItemAllowance, practiceMode, RECALL_WINDOW_DAYS } from '@/core/planner';
@@ -14,7 +15,7 @@ import {
 } from '@/core/queue';
 import { isRecalled, Rating, usualResponseMs, type Grade } from '@/core/rating';
 import { createScheduler, type CardSchedule } from '@/core/scheduler';
-import { DAY_MS, startOfLocalDay } from '@/core/time';
+import { DAY_MS, localDay, startOfLocalDay } from '@/core/time';
 
 import { notifyChange } from '../changes';
 import type { DbOrTx } from '../db';
@@ -28,6 +29,7 @@ import {
   type CardRow,
   type ItemRow,
 } from '../schema';
+import { activeCram, cramCards, isCrammed } from './cram';
 import { coverage } from './exercises';
 import { grammarForCategory } from './grammar';
 import { getAllSettings } from './settings';
@@ -132,21 +134,40 @@ export function waitingCardIds(db: DbOrTx): Set<number> {
   return new Set(rows.flatMap((r) => r.exercise.targets.map((t) => t.cardId)));
 }
 
+/** Cram mode's work for today, or null when it is off or the exam is over. */
+export function todayCram(
+  db: DbOrTx,
+  now: Date,
+  context = { unlocked: unlockedItemIds(db, now), waiting: waitingCardIds(db) },
+): CramPicks | null {
+  const plan = activeCram(db, now);
+  if (!plan) return null;
+  return cramPicks(cramCards(db, plan, now, context), {
+    today: localDay(now),
+    examDay: plan.examDay,
+    now: now.getTime(),
+  });
+}
+
 /**
  * Today's queue. Both daily limits count what was already done today, so a
  * second session the same day does not reset them. Grammar cards come only
  * with a drill ready, and cards with an answer waiting to be graded wait too.
+ * In cram mode, the exam's cards for today join in.
  */
 export function todayQueue(db: DbOrTx, now: Date): QueueEntry[] {
   const candidates = queueCandidates(db);
+  const unlocked = unlockedItemIds(db, now);
+  const waiting = waitingCardIds(db);
   return buildQueue(candidates, {
     now: now.getTime(),
     newItemsAllowance: dailyAllowance(db, now, candidates) - newItemsIntroducedToday(db, now),
-    unlockedItemIds: unlockedItemIds(db, now),
+    unlockedItemIds: unlocked,
     siblingCap: SIBLING_CAP - newSiblingCardsToday(db, now),
     drillReady: new Set(coverage(db, 'grammar_drill').keys()),
     pullForward: pullForwardGrammar(db, now),
-    excludeCardIds: waitingCardIds(db),
+    excludeCardIds: waiting,
+    cram: todayCram(db, now, { unlocked, waiting }) ?? undefined,
   });
 }
 
@@ -247,15 +268,16 @@ export interface ReviewInput {
  * Grade a card: update its FSRS state and log the review (and any mistakes)
  * in a single transaction, written the moment you answer. A lapse that
  * makes the card a leech flags it, and a wrong word that is another deck
- * word is logged as a confusion between the two.
+ * word is logged as a confusion between the two. A card being crammed for
+ * an exam is scheduled at the higher cram target recall.
  */
 export function recordReview(db: DbOrTx, input: ReviewInput, now: number): CardSchedule {
-  const targetRecall = getAllSettings(db)['study.targetRecall'];
-  const scheduler = createScheduler({ targetRecall });
+  const usualRecall = getAllSettings(db)['study.targetRecall'];
   const next = db.transaction((tx) => {
     const current = tx.select().from(card).where(eq(card.id, input.cardId)).get();
     if (!current) throw new Error(`Card ${input.cardId} not found`);
-    const schedule = scheduler.review(current, input.rating, now);
+    const targetRecall = cramRecall(usualRecall, isCrammed(tx, current.itemId, now));
+    const schedule = createScheduler({ targetRecall }).review(current, input.rating, now);
     const leech = schedule.lapses > current.lapses && isLeechLapse(schedule.lapses);
     tx.update(card)
       .set({ ...schedule, ...(leech ? { leechAt: now } : {}) })
