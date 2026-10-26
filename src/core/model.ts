@@ -55,4 +55,3 @@ export const SUGGESTION_STATUSES = ['pending', 'accepted', 'rejected'] as const;
 export type SuggestionStatus = (typeof SUGGESTION_STATUSES)[number];
 
 export type Example = { de: string; en: string };
-export type ChatMessage = { role: 'user' | 'assistant'; content: string; correction?: string };
