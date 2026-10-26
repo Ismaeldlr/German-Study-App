@@ -1,0 +1,63 @@
+# Paste a list, then study: a new word is introduced, asked, rated and summed up.
+appId: com.ismaeldlr.germanstudy
+name: Paste a list and study it
+tags:
+  - study
+---
+- runFlow: subflows/launch-fresh.yaml
+- runFlow: subflows/use-mock-llm.yaml
+- tapOn:
+    id: home-paste
+- tapOn:
+    id: paste-input
+- inputText: Wohnung
+- pressKey: Enter
+- inputText: Zimmer
+- pressKey: Enter
+- inputText: Garten
+- hideKeyboard
+- tapOn:
+    id: paste-review-button
+- extendedWaitUntil:
+    visible:
+      id: paste-review
+    timeout: 20000
+- assertVisible:
+    id: paste-summary
+    text: 3 lines.*
+- tapOn:
+    id: paste-import
+- assertVisible: Imported 3 words.
+- tapOn:
+    id: paste-study
+# The first new word is introduced, then asked as a multiple-choice card.
+- extendedWaitUntil:
+    visible:
+      id: study-intro
+    timeout: 10000
+- assertVisible: die Wohnung
+- tapOn:
+    id: study-intro-continue
+# The prompt's badge is shown in capitals.
+- assertVisible: (?i)what does this mean\?
+- tapOn: flat, apartment
+- assertVisible: Right!
+- assertVisible: Rated Good
+- tapOn:
+    id: study-continue
+- tapOn:
+    id: study-stop
+- assertVisible:
+    id: study-summary
+- assertVisible: 1 card done
+- assertVisible: 'Recall: 100%'
+- scrollUntilVisible:
+    element:
+      id: summary-done
+    direction: DOWN
+- tapOn:
+    id: summary-done
+# One card answered starts a streak.
+- assertVisible:
+    id: home-streak
+    text: .*1.*

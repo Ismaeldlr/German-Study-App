@@ -1,0 +1,9 @@
+# A fresh install: no deck, no settings, no API key.
+appId: com.ismaeldlr.germanstudy
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: home-screen
+    timeout: 60000

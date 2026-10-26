@@ -1,0 +1,35 @@
+# Add one word: the LLM fills in the grammar, you check a preview, it lands in the deck.
+appId: com.ismaeldlr.germanstudy
+name: Add a word
+tags:
+  - add
+---
+- runFlow: subflows/launch-fresh.yaml
+- runFlow: subflows/use-mock-llm.yaml
+- tapOn:
+    id: home-add
+- tapOn:
+    id: add-word-input
+- inputText: Wohnung
+- tapOn:
+    id: add-look-up
+- extendedWaitUntil:
+    visible:
+      id: add-preview
+    timeout: 20000
+- assertVisible: Check before saving
+- scrollUntilVisible:
+    element:
+      id: add-save
+    direction: DOWN
+- tapOn:
+    id: add-save
+- assertVisible:
+    id: add-saved
+- tapOn: Navigate up
+- tapOn: Words
+# The count is an overline, shown in capitals.
+- assertVisible:
+    id: words-count
+    text: (?i)1 word
+- assertVisible: flat, apartment
