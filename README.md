@@ -18,9 +18,12 @@ Built with React Native and Expo. Everything lives on the phone: no accounts, no
 - **Chat roleplay.** Talk with a character in an everyday scenario that fits your chapter or interests, for up to ten messages. Every message you write gets a correction folded under it, the character steers toward words you are learning, and the chat ends with a teacher's summary. Mistakes go to your weak spots and each target word you used gets rated.
 - **A finisher for the session.** About three days a week the Study session ends with a mini story or a short chat, alternating. Both are also on Home under *Mehr üben*.
 - **Word suggestions.** When your queue runs dry, the app suggests A2 words for the current chapter, and you approve each one.
-- **Chapters.** Items are tagged by textbook chapter (Momente A2).
+- **Chapters.** Paste the textbook's contents page once (`1 Zu Hause: Wohnen, Umzug`) and every new word lands in the chapter class is on. Each chapter shows how much of it is mature and has its own word list.
+- **Cram mode.** Pick the chapters an exam covers and its date. Until then their cards are scheduled at 95% recall and come back on at least two different days, spread evenly over the days left instead of piling up the night before.
+- **Stats.** Real recall over 7 and 30 days against your target, split by exercise so a strong gap fill cannot hide a weak translation. Also a 14-day review forecast, coverage per chapter, minutes studied per day and LLM spend.
+- **Weak-spot drills.** Every weak spot has a one-tap drill: its grammar drills and the cards you made those mistakes on, due or not.
 - **Progress you can see.** Every card earns XP, harder exercises earn more, and a daily goal ring fills as you go. Streaks come with freezes, so one missed day does not erase weeks. There are levels with German titles, an activity calendar and badges. All of it is computed from your review history, so a backup restores it too.
-- **A daily reminder, if you want one.** Off until you turn it on. It sends one local notification a day at the hour you pick and skips days you already studied. The text names your streak and any banked freezes, and never guilt-trips.
+- **A daily reminder, if you want one.** Off until you turn it on. It sends one local notification a day at the hour you pick, plus an optional second one at 21:00, and skips days you already studied. The text names the work waiting (*23 reviews and 4 new words*), your streak and any banked freezes, and never guilt-trips.
 - **A friendlier study session.** Articles are coloured by gender (der blue, die red, das green), answers get instant colour, haptics and a German cheer, a combo counter tracks answers in a row, and every session ends with a summary of what you earned.
 - **Budget control.** Tracks token usage and stops at a monthly spending cap.
 - **Backups.** Export and import your whole deck as a file.
@@ -87,4 +90,4 @@ scripts/      Mock LLM server and data build scripts
 
 ## Status
 
-Work in progress. The deck, scheduler, word entry, gap fills, translations, grammar drills, weak spots, leech handling, progress (XP, streaks, badges), mini stories and chat roleplay work. Next up: the stats screen, chapter coverage and cram mode.
+Work in progress. The deck, scheduler, word entry, gap fills, translations, grammar drills, weak spots, leech handling, progress (XP, streaks, badges), mini stories, chat roleplay, stats, chapter coverage and cram mode work. Next up: end-to-end tests and a release build.
