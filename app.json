@@ -36,7 +36,8 @@
       ],
       "expo-sqlite",
       "expo-secure-store",
-      "expo-sharing"
+      "expo-sharing",
+      "./plugins/with-local-cleartext"
     ],
     "experiments": {
       "typedRoutes": true,
