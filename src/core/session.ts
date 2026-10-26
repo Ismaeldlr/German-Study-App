@@ -91,6 +91,18 @@ export function recordAnswer(
   return next;
 }
 
+/**
+ * Ratings from the finisher, a story or a chat after the cards: they count
+ * toward the session's cards and recall, and nothing comes back from them.
+ */
+export function addRatings(state: SessionState, ratings: readonly number[]): SessionState {
+  return {
+    ...state,
+    answered: state.answered + ratings.length,
+    recalled: state.recalled + ratings.filter(isRecalled).length,
+  };
+}
+
 /** An answer that waits for the LLM: no rating yet, so nothing comes back this session. */
 export function deferAnswer(state: SessionState): SessionState {
   return { ...state, deferred: state.deferred + 1 };
