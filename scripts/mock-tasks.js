@@ -513,6 +513,167 @@ const leechHelp = {
   },
 };
 
+const STORY_OPENING = [
+  'Lena wohnt seit einem Jahr in Leipzig. Sie arbeitet in einem kleinen Café in der Stadt.',
+  'Am Morgen trinkt sie immer einen Kaffee und liest die Zeitung. Heute ist ein besonderer Tag.',
+].join(' ');
+const STORY_ENDING = [
+  'Am Abend ruft sie ihre Freundin Mia an. Die beiden sprechen lange über den Tag.',
+  'Mia lacht viel und erzählt von ihrer Arbeit. Das Wetter ist schön, und die Sonne scheint warm.',
+  'Danach geht Lena müde ins Bett und schläft schnell ein.',
+].join(' ');
+
+/** A sentence that uses the target, and the form it stands in. */
+function storyLine(target) {
+  const bare = bareWord(target.word, target.type);
+  if (target.type === 'noun') {
+    const article = /^(der|die|das)\s+/.exec(target.word)?.[1] ?? 'die';
+    return { de: `Für Lena ist ${article} ${bare} heute sehr wichtig.`, form: bare };
+  }
+  if (target.type === 'verb') return { de: `Lena möchte heute endlich ${bare}.`, form: bare };
+  return { de: `Das findet Lena wirklich ${bare}.`, form: bare };
+}
+
+function storyQuestion(target) {
+  const bare = bareWord(target.word, target.type);
+  const sentence =
+    target.type === 'noun'
+      ? 'Lena denkt den ganzen Tag an ___.'
+      : target.type === 'verb'
+        ? 'Lena möchte bald ___.'
+        : 'Lena findet alles ___.';
+  return {
+    target: target.id,
+    sentence,
+    answer: bare,
+    accepted: [],
+    cue: target.meaning,
+    translation: `(story) A sentence with "${target.meaning}".`,
+  };
+}
+
+const genStory = {
+  task: 'gen_story',
+  respond(_lastUser, body) {
+    const input = JSON.parse(firstUser(body));
+    const lines = input.targets.map(storyLine);
+    return JSON.stringify({
+      title: `Lenas Tag: ${input.topic}`,
+      text: [STORY_OPENING, lines.map((l) => l.de).join(' '), STORY_ENDING].join('\n\n'),
+      targets: input.targets.map((t, i) => ({ id: t.id, forms: [lines[i].form] })),
+      glosses: [
+        { de: 'besonderer', en: 'special' },
+        { de: 'Zeitung', en: 'newspaper' },
+        { de: 'erzählt', en: 'tells' },
+      ],
+      questions: input.targets.slice(0, 5).map(storyQuestion),
+    });
+  },
+};
+
+const chatOpen = {
+  task: 'chat_open',
+  respond(_lastUser, body) {
+    const input = JSON.parse(firstUser(body));
+    return JSON.stringify({
+      title: `Im Treppenhaus: ${input.topic}`,
+      character: 'Frau Becker, your neighbour',
+      situation: `You meet your neighbour Frau Becker on the stairs and chat about ${input.topic}.`,
+      reply: 'Hallo! Schön, Sie zu sehen. Wie geht es Ihnen heute?',
+      translation: 'Hello! Nice to see you. How are you today?',
+    });
+  },
+};
+
+const CHAT_REPLIES = [
+  [
+    'Interessant! Und was machen Sie am Wochenende?',
+    'Interesting! And what are you doing at the weekend?',
+  ],
+  ['Ah, verstehe. Wie lange wohnen Sie schon hier?', 'Ah, I see. How long have you lived here?'],
+  ['Schön! Kennen Sie schon die anderen Nachbarn?', 'Nice! Do you know the other neighbours yet?'],
+  ['Wirklich? Erzählen Sie mehr!', 'Really? Tell me more!'],
+];
+const NOUNS = Object.keys(KNOWN).filter((w) => KNOWN[w].kind === 'noun');
+
+const chatTurn = {
+  task: 'chat_turn',
+  respond(_lastUser, body) {
+    const input = JSON.parse(firstUser(body));
+    const message = input.message;
+    const tokens = message.split(/[\s,.!?]+/).filter(Boolean);
+    const nounTargets = input.targets
+      .filter((t) => /^(der|die|das)\s/.test(t.word))
+      .map((t) => bareWord(t.word, 'noun'));
+    const errors = [];
+    for (const noun of [...new Set([...NOUNS, ...nounTargets])]) {
+      if (tokens.includes(noun.toLowerCase())) {
+        errors.push({
+          category: 'capitalization',
+          text: noun.toLowerCase(),
+          correction: noun,
+          explanation: 'German capitalizes every noun.',
+        });
+      }
+    }
+    if (/habe gegangen/i.test(message)) {
+      errors.push({
+        category: 'verb_form',
+        text: 'habe gegangen',
+        correction: 'bin gegangen',
+        explanation: 'gehen forms the Perfekt with sein.',
+      });
+    }
+    let corrected = message;
+    for (const e of errors) corrected = corrected.replace(e.text, e.correction);
+    const lower = tokens.map((t) => t.toLowerCase());
+    const used = input.targets.flatMap((t) => {
+      const type = /^(der|die|das)\s/.test(t.word) ? 'noun' : /^to /.test(t.meaning) ? 'verb' : '';
+      const bare = bareWord(t.word, type);
+      if (!lower.includes(bare.toLowerCase())) return [];
+      return [
+        { word: t.word, verdict: type === 'noun' && !tokens.includes(bare) ? 'slip' : 'correct' },
+      ];
+    });
+    const last = input.turn >= input.turns;
+    const [reply, translation] = last
+      ? ['Das war schön! Vielen Dank und bis bald!', 'That was nice! Thank you and see you soon!']
+      : CHAT_REPLIES[input.turn % CHAT_REPLIES.length];
+    return JSON.stringify({
+      correction: {
+        verdict:
+          errors.length === 0
+            ? 'correct'
+            : errors.some((e) => e.category !== 'capitalization')
+              ? 'wrong'
+              : 'minor',
+        corrected,
+        errors,
+      },
+      used,
+      reply,
+      translation,
+      summary: `The learner has written ${input.turn} messages in "${input.scenario.title}".`,
+    });
+  },
+};
+
+const chatSummary = {
+  task: 'chat_summary',
+  respond(_lastUser, body) {
+    const input = JSON.parse(firstUser(body));
+    const mistakes = input.messages.flatMap((m) => m.errors);
+    const text = input.messages.map((m) => m.text.toLowerCase()).join(' ');
+    const wellUsed = input.targets.filter((t) => text.includes(bareWord(t, '').toLowerCase()));
+    return JSON.stringify({
+      feedback: mistakes.length
+        ? 'You kept the conversation going well. Watch the capital letters on nouns: die Wohnung, not die wohnung.'
+        : 'A great chat without a single mistake. Next time, try a sentence with weil.',
+      wellUsed,
+    });
+  },
+};
+
 module.exports = {
   handlers: [
     enrichWords,
@@ -524,5 +685,9 @@ module.exports = {
     gradeTranslation,
     genContrast,
     leechHelp,
+    genStory,
+    chatOpen,
+    chatTurn,
+    chatSummary,
   ],
 };
