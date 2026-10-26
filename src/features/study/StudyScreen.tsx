@@ -5,6 +5,7 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { displayLemma } from '@/core/cards';
 import { itemsByWord, setGrade } from '@/core/drills';
+import { finisherKinds } from '@/core/finisher';
 import { fillGap, gapHint } from '@/core/gap-fill';
 import type { MistakeNote } from '@/core/grading';
 import type { ExerciseMode } from '@/core/model';
@@ -14,7 +15,13 @@ import { ratingFor, type Outcome } from '@/core/rating';
 import { accuracy, progress } from '@/core/session';
 import { localDay } from '@/core/time';
 import type { Db } from '@/data/db';
-import { discardExercise, markExerciseUsed, nextExercise } from '@/data/repos/exercises';
+import { lastChatAt } from '@/data/repos/chats';
+import {
+  discardExercise,
+  lastShownAt,
+  markExerciseUsed,
+  nextExercise,
+} from '@/data/repos/exercises';
 import { getGrammarNote } from '@/data/repos/grammar';
 import { markGradesSeen, savePendingGrade } from '@/data/repos/grading';
 import { progressReport, unlockedIds } from '@/data/repos/progress';
@@ -39,10 +46,12 @@ import { FadeIn } from '@/ui/motion';
 import { radius, spacing, useTheme } from '@/ui/theme';
 import { UmlautBar } from '@/ui/umlaut';
 
+import { PracticeButtons } from '../practice/PracticeButtons';
 import { syncReminders } from '../reminders';
 import { useServices } from '../services';
 import { useOnline } from '../use-online';
 import { RATING_LABELS } from '../words/describe';
+import { Finisher } from './Finisher';
 import { GapFillQuestion } from './GapFillQuestion';
 import {
   DrillQuestion,
@@ -78,8 +87,9 @@ import {
  * the rest and today's new words. Words you mix up come as a contrast set.
  * A card without its cached exercise (offline, no key, over budget) is
  * asked as a classic card instead. A translation is graded by the LLM
- * while you wait, or saved to be graded later. The session ends at your
- * time target or when the work runs out.
+ * while you wait, or saved to be graded later. The cards end at your time
+ * target or when the work runs out; on finisher days a mini story or a
+ * short chat follows, unless you stopped the session yourself.
  */
 export function StudyScreen() {
   const services = useServices();
@@ -102,6 +112,7 @@ export function StudyScreen() {
       deadline: time + getSetting(db, 'study.sessionMinutes') * 60_000,
       present: (entry) => presentEntry(db, entry, now().getTime()),
       baseline: baselineFor(db, now()),
+      finisher: finisherKinds({ story: lastShownAt(db, 'story'), chat: lastChatAt(db) }, now()),
     });
   }, [db, now]);
 
@@ -401,7 +412,11 @@ export function StudyScreen() {
       options={{
         title,
         headerRight:
-          phase === 'question' || phase === 'feedback' || phase === 'intro' || phase === 'grading'
+          phase === 'question' ||
+          phase === 'feedback' ||
+          phase === 'intro' ||
+          phase === 'grading' ||
+          phase === 'finisher'
             ? () => (
                 <Button testID="study-stop" label="Stop" variant="ghost" onPress={store.finish} />
               )
@@ -420,10 +435,20 @@ export function StudyScreen() {
             Nothing to study right now.
           </AppText>
           <AppText style={{ textAlign: 'center' }}>
-            New cards and reviews show up here when they are due.
+            New cards and reviews show up here when they are due. Feel like more?
           </AppText>
         </View>
+        <PracticeButtons replace />
         <Button label="Back" variant="secondary" onPress={() => router.back()} />
+      </Screen>
+    );
+  }
+
+  if (phase === 'finisher') {
+    return (
+      <Screen testID="study-finisher" scroll={false} footer={<UmlautBar />}>
+        {header}
+        <Finisher kinds={store.finisher} onDone={store.finisherDone} onSkip={store.finish} />
       </Screen>
     );
   }

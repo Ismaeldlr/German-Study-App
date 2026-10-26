@@ -45,3 +45,52 @@ describe('study store: XP and combo', () => {
     expect(useStudyStore.getState()).toMatchObject({ xp: 0, combo: 0, bestCombo: 0 });
   });
 });
+
+describe('study store: the finisher', () => {
+  const answerAll = () => {
+    const state = useStudyStore.getState();
+    const cardId = state.entry!.cardId;
+    state.answered(
+      feedback('correct', 10),
+      [{ cardId, itemId: cardId, type: 'recognize', rating: 3, nextDue: 1e12 }],
+      'x',
+      0,
+    );
+    useStudyStore.getState().next(0);
+  };
+
+  it('comes once the cards are done, and its ratings, XP and mistakes join the session', () => {
+    useStudyStore.getState().begin(1, [entry(1)], 0, { finisher: ['story', 'chat'] });
+    answerAll();
+    expect(useStudyStore.getState().phase).toBe('finisher');
+
+    useStudyStore.getState().finisherDone({
+      ratings: [3, 1],
+      xp: 14,
+      mistakes: [
+        {
+          category: 'spelling',
+          yourText: 'Mite',
+          correction: 'Miete',
+          explanation: '',
+          lemma: 'x',
+        },
+      ],
+    });
+    const state = useStudyStore.getState();
+    expect(state.phase).toBe('done');
+    expect(state.session).toMatchObject({ answered: 3, recalled: 2 });
+    expect(state.xp).toBe(24);
+    expect(state.mistakes).toHaveLength(1);
+  });
+
+  it('never comes on other days, or after Stop', () => {
+    useStudyStore.getState().begin(1, [entry(1)], 0);
+    answerAll();
+    expect(useStudyStore.getState().phase).toBe('done');
+
+    useStudyStore.getState().begin(2, [entry(1), entry(2)], 0, { finisher: ['story'] });
+    useStudyStore.getState().finish();
+    expect(useStudyStore.getState()).toMatchObject({ phase: 'done', finisher: [] });
+  });
+});
