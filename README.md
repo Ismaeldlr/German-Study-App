@@ -14,6 +14,9 @@ Built with React Native and Expo. Everything lives on the phone: no accounts, no
 - **Grammar points.** Name a rule such as *Dativ nach mit, bei, von*; the LLM writes a short summary and examples, and the rule is drilled with generated five-item drills.
 - **Weak spots.** Every mistake gets a category (articles, case endings, word order…). Recent ones weigh most, and your top weak spot pulls its grammar point into the next session.
 - **Leeches and mix-ups.** Cards you keep forgetting get a memory hook; words you confuse, such as *stellen* and *stehen*, come back together in contrast exercises.
+- **Mini stories.** Once a day the LLM writes a 120 to 200 word story around words you know. Tap any underlined word for its English, then answer a few gap questions with the story out of sight. A deck word you tap comes back sooner; one you read without help is left alone.
+- **Chat roleplay.** Talk with a character in an everyday scenario that fits your chapter or interests, for up to ten messages. Every message you write gets a correction folded under it, the character steers toward words you are learning, and the chat ends with a teacher's summary. Mistakes go to your weak spots and each target word you used gets rated.
+- **A finisher for the session.** About three days a week the Study session ends with a mini story or a short chat, alternating. Both are also on Home under *Mehr üben*.
 - **Word suggestions.** When your queue runs dry, the app suggests A2 words for the current chapter, and you approve each one.
 - **Chapters.** Items are tagged by textbook chapter (Momente A2).
 - **Progress you can see.** Every card earns XP, harder exercises earn more, and a daily goal ring fills as you go. Streaks come with freezes, so one missed day does not erase weeks. There are levels with German titles, an activity calendar and badges. All of it is computed from your review history, so a backup restores it too.
@@ -84,4 +87,4 @@ scripts/      Mock LLM server and data build scripts
 
 ## Status
 
-Work in progress. The deck, scheduler, word entry, gap fills, translations, grammar drills, weak spots, leech handling, and progress (XP, streaks, badges) work. Next up: mini stories and chat roleplay.
+Work in progress. The deck, scheduler, word entry, gap fills, translations, grammar drills, weak spots, leech handling, progress (XP, streaks, badges), mini stories and chat roleplay work. Next up: the stats screen, chapter coverage and cram mode.
