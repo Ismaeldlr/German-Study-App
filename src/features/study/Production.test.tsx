@@ -426,6 +426,8 @@ describe('contrast sets in the Study session', () => {
     await answerItem('stellen');
     expect(await screen.findByText('Right!')).toBeOnTheScreen();
     await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+    // The LLM is set up, so the session offers a chat to finish; not today.
+    await fireEvent.press(await screen.findByRole('button', { name: 'Skip for today' }));
     expect(await screen.findByTestId('summary-cards')).toHaveTextContent('3 cards done');
   });
 });
