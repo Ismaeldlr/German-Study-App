@@ -1,8 +1,9 @@
-import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, isNotNull, isNull, sql } from 'drizzle-orm';
 
 import type { ContrastSet, GrammarDrill } from '@/core/drills';
 import { FRESHNESS_WINDOW, isFresh, type GapExercise } from '@/core/gap-fill';
 import type { ExerciseMode } from '@/core/model';
+import type { StoryExercise } from '@/core/story';
 import type { TranslationExercise } from '@/core/translation';
 
 import { notifyChange } from '../changes';
@@ -12,8 +13,8 @@ import { exercise, type ExerciseRow } from '../schema';
 /**
  * The cache of generated content. Each row is used once; an item never
  * gets a sentence it saw within its last FRESHNESS_WINDOW exercises of
- * that mode. Gap sentences, translations, grammar drills and contrast sets
- * all live here, told apart by mode.
+ * that mode. Gap sentences, translations, grammar drills, contrast sets
+ * and stories all live here, told apart by mode.
  */
 
 export interface GapPayload extends GapExercise {
@@ -26,6 +27,7 @@ export interface PayloadByMode {
   translation: TranslationExercise;
   grammar_drill: GrammarDrill;
   contrast: ContrastSet;
+  story: StoryExercise;
 }
 export type CachedMode = keyof PayloadByMode;
 
@@ -154,6 +156,33 @@ export function nextExercise<M extends CachedMode>(
     .filter((r) => !r.sentenceHash || isFresh(r.sentenceHash, recent))
     .sort((a, b) => a.createdAt - b.createdAt || a.id - b.id)[0];
   return row ? toCached<M>(row) : null;
+}
+
+/** The oldest story waiting to be read. A story is not tied to one word, so any will do. */
+export function nextStory(db: DbOrTx): Cached<'story'> | null {
+  const row = liveRows(db, 'story')
+    .filter((r) => r.usedAt === null)
+    .sort((a, b) => a.createdAt - b.createdAt || a.id - b.id)[0];
+  return row ? toCached<'story'>(row) : null;
+}
+
+/** When an exercise of a mode was last shown, or null. Thrown-out ones count: you saw them. */
+export function lastShownAt(db: DbOrTx, mode: CachedMode): number | null {
+  const row = db
+    .select({ at: sql<number | null>`max(${exercise.usedAt})` })
+    .from(exercise)
+    .where(eq(exercise.mode, mode))
+    .get();
+  return row?.at ?? null;
+}
+
+/** How many exercises of a mode were written since a moment, used or not. */
+export function writtenSince(db: DbOrTx, mode: CachedMode, since: number): number {
+  return db
+    .select({ id: exercise.id })
+    .from(exercise)
+    .where(and(eq(exercise.mode, mode), gte(exercise.createdAt, since)))
+    .all().length;
 }
 
 export function nextGapExercise(db: DbOrTx, itemId: number): CachedGap | null {
