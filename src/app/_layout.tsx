@@ -111,6 +111,7 @@ export default function RootLayout() {
               <Stack.Screen name="add" options={{ title: 'Add a word' }} />
               <Stack.Screen name="paste" options={{ title: 'Paste a list' }} />
               <Stack.Screen name="chapters" options={{ title: 'Chapters' }} />
+              <Stack.Screen name="chapter/[id]" options={{ title: 'Chapter' }} />
               <Stack.Screen name="item/[id]" options={{ title: 'Word' }} />
               <Stack.Screen name="edit/[id]" options={{ title: 'Edit word' }} />
               <Stack.Screen name="suggestions" options={{ title: 'Suggested words' }} />

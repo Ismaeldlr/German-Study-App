@@ -1,5 +1,7 @@
 import { asc, eq } from 'drizzle-orm';
 
+import type { ChapterLine } from '@/core/chapters';
+
 import { notifyChange } from '../changes';
 import type { DbOrTx } from '../db';
 import { chapter, type ChapterRow } from '../schema';
@@ -51,6 +53,54 @@ export function updateChapter(db: DbOrTx, id: number, input: ChapterInput): void
 export function deleteChapter(db: DbOrTx, id: number): void {
   db.delete(chapter).where(eq(chapter.id, id)).run();
   notifyChange('chapter', 'item');
+}
+
+/**
+ * Save a pasted chapter list in one go: new numbers become chapters, and
+ * numbers the book already has get the new title. Their themes are only
+ * replaced when the line names some.
+ */
+export function saveChapterList(
+  db: DbOrTx,
+  lines: readonly ChapterLine[],
+  book = 'Momente A2',
+): { created: number; updated: number } {
+  const name = book.trim() || 'Momente A2';
+  const existing = new Map(
+    listChapters(db)
+      .filter((c) => c.book === name)
+      .map((c) => [c.number, c]),
+  );
+  const counts = db.transaction((tx) => {
+    let created = 0;
+    let updated = 0;
+    for (const line of lines) {
+      const old = existing.get(line.number);
+      if (old) {
+        tx.update(chapter)
+          .set({
+            title: line.title.trim(),
+            themes: line.themes.length ? cleanThemes(line.themes) : old.themes,
+          })
+          .where(eq(chapter.id, old.id))
+          .run();
+        updated++;
+      } else {
+        tx.insert(chapter)
+          .values({
+            book: name,
+            number: line.number,
+            title: line.title.trim(),
+            themes: cleanThemes(line.themes),
+          })
+          .run();
+        created++;
+      }
+    }
+    return { created, updated };
+  });
+  notifyChange('chapter');
+  return counts;
 }
 
 export function chapterLabel(row: Pick<ChapterRow, 'number' | 'title'>): string {

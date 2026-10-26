@@ -164,6 +164,9 @@ export function StatsScreen() {
                   </AppText>
                 </View>
               }
+              onPress={() =>
+                router.push({ pathname: '/chapter/[id]', params: { id: String(chapter.id) } })
+              }
             />
           ))
         ) : (
