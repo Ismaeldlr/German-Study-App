@@ -1,14 +1,15 @@
-import { reminderPlan } from '@/core/reminders';
+import { REMINDER_DAYS, reminderPlan } from '@/core/reminders';
 import type { DbOrTx } from '@/data/db';
 import { pulse } from '@/data/repos/progress';
 import { getSetting } from '@/data/repos/settings';
+import { upcomingWork } from '@/data/repos/study';
 
 import * as Notifications from './notifications';
 
 /**
- * The daily study reminder as local notifications. The app schedules
- * nothing else, so planning again starts by cancelling everything. Errors
- * are swallowed: without notifications the app works just the same.
+ * The study reminders as local notifications. The app schedules nothing
+ * else, so planning again starts by cancelling everything. Errors are
+ * swallowed: without notifications the app works just the same.
  */
 
 const CHANNEL_ID = 'study-reminders';
@@ -43,7 +44,18 @@ async function schedule(db: DbOrTx, now: Date): Promise<void> {
   // Never prompts: permission is only asked for when you turn reminders on.
   if (!(await Notifications.getPermissionsAsync()).granted) return;
   const channelId = await reminderChannel();
-  const plan = reminderPlan(pulse(db, now).streak, getSetting(db, 'ui.reminderHour'), now);
+  // One day more than planned: when today is skipped, the week starts tomorrow.
+  const work = upcomingWork(db, now, REMINDER_DAYS + 1);
+  const plan = reminderPlan(
+    pulse(db, now).streak,
+    getSetting(db, 'ui.reminderHour'),
+    now,
+    REMINDER_DAYS,
+    {
+      evening: getSetting(db, 'ui.eveningReminder'),
+      workOn: (ahead) => work[ahead] ?? null,
+    },
+  );
   for (const reminder of plan) {
     await Notifications.scheduleNotificationAsync({
       content: { title: reminder.title, body: reminder.body },

@@ -69,9 +69,10 @@ describe('Daily reminder setting', () => {
       /^Next one today at 19:00/,
     );
     await waitFor(async () => expect(await scheduled()).toHaveLength(7));
+    // The test deck's word was never introduced: its gender card is the one answered.
     expect((await scheduled())[0]).toEqual({
       title: 'Deine Wörter warten 🔥',
-      body: 'Keep your 3-day streak going.',
+      body: '1 new word is waiting. Keep your 3-day streak going.',
       date: new Date(2026, 9, 19, 19),
     });
   });
@@ -86,7 +87,7 @@ describe('Daily reminder setting', () => {
     );
     await waitFor(async () => expect(await scheduled()).toHaveLength(7));
     expect((await scheduled())[0]).toMatchObject({
-      body: 'Keep your 3-day streak going.',
+      body: '1 new word is waiting. Keep your 3-day streak going.',
       date: new Date(2026, 9, 20, 19),
     });
   });
@@ -103,10 +104,43 @@ describe('Daily reminder setting', () => {
     await waitFor(async () =>
       expect((await scheduled())[0]).toEqual({
         title: 'Deine Wörter warten 📚',
-        body: 'A few minutes is all it takes to start a streak.',
+        body: '1 new word is waiting. A few minutes is all it takes to start a streak.',
         date: new Date(2026, 9, 19, 21),
       }),
     );
+  });
+
+  it('adds an evening reminder that names the reviews waiting', async () => {
+    const services = await studiedOn([16, 17, 18]);
+    const t = services.now().getTime();
+    services.db
+      .update(card)
+      .set({ state: 2, stability: 3, difficulty: 5, due: t - 3600_000, lastReview: t - 86_400_000 })
+      .run();
+    await renderWithServices(<SettingsScreen />, services);
+    await turnOn();
+    await fireEvent(
+      screen.getByLabelText('Again at 21:00 if I have not studied'),
+      'valueChange',
+      true,
+    );
+
+    expect(getSetting(services.db, 'ui.eveningReminder')).toBe(true);
+    await waitFor(async () => expect(await scheduled()).toHaveLength(14));
+    const [first, second] = await scheduled();
+    expect(first).toMatchObject({
+      body: '4 reviews are waiting. Keep your 3-day streak going.',
+      date: new Date(2026, 9, 19, 19),
+    });
+    expect(second).toMatchObject({
+      title: 'Noch Zeit heute 🌙',
+      date: new Date(2026, 9, 19, 21),
+    });
+
+    // A 21:00 reminder has no evening one after it.
+    await fireEvent.press(screen.getByRole('radio', { name: '21:00' }));
+    expect(screen.queryByLabelText('Again at 21:00 if I have not studied')).not.toBeOnTheScreen();
+    await waitFor(async () => expect(await scheduled()).toHaveLength(7));
   });
 
   it('cancels the reminders when turned off', async () => {

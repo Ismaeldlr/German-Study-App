@@ -51,6 +51,8 @@ export const settingsSchema = {
   'ui.reminderEnabled': z.boolean(),
   /** Local hour the reminder fires at. */
   'ui.reminderHour': z.number().int().min(0).max(23),
+  /** A second reminder in the evening, on days you have not studied by then. */
+  'ui.eveningReminder': z.boolean(),
   /** When the last backup was exported, for the weekly nudge. */
   'data.lastExportAt': z.number().nullable(),
 } as const;
@@ -76,6 +78,7 @@ export const SETTING_DEFAULTS: SettingsValues = {
   'ui.haptics': true,
   'ui.reminderEnabled': false,
   'ui.reminderHour': 19,
+  'ui.eveningReminder': false,
   'data.lastExportAt': null,
 };
 

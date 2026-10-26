@@ -4,7 +4,7 @@ import { Alert, Linking, View } from 'react-native';
 
 import { parseDecimal } from '@/core/format';
 import { DAILY_GOALS, XP_PER_MINUTE } from '@/core/progress';
-import { hourLabel, nextReminder, REMINDER_HOURS } from '@/core/reminders';
+import { EVENING_HOUR, hourLabel, nextReminder, REMINDER_HOURS } from '@/core/reminders';
 import { localDay } from '@/core/time';
 import { chapterLabel, listChapters, parseThemes } from '@/data/repos/chapters';
 import { restoreBackup } from '@/data/repos/backup';
@@ -49,6 +49,7 @@ export function StudySettings() {
         <ReminderSetting
           enabled={settings['ui.reminderEnabled']}
           hour={settings['ui.reminderHour']}
+          evening={settings['ui.eveningReminder']}
         />
         <SwitchRow
           testID="haptics"
@@ -135,10 +136,18 @@ export function StudySettings() {
 }
 
 /** The daily reminder. Permission is asked for only when you turn it on. */
-function ReminderSetting({ enabled, hour }: { enabled: boolean; hour: number }) {
+function ReminderSetting({
+  enabled,
+  hour,
+  evening,
+}: {
+  enabled: boolean;
+  hour: number;
+  evening: boolean;
+}) {
   const { db, now } = useServices();
   const next = useLiveQuery(
-    () => nextReminder(pulse(db, now()).streak, hour, now()),
+    () => nextReminder(pulse(db, now()).streak, hour, now(), { evening }),
     ['review', 'settings'],
   );
   const [blocked, setBlocked] = useState(false);
@@ -156,6 +165,10 @@ function ReminderSetting({ enabled, hour }: { enabled: boolean; hour: number }) 
     setSetting(db, 'ui.reminderHour', Number(value));
     await syncReminders(db, now());
   };
+  const toggleEvening = async (on: boolean) => {
+    setSetting(db, 'ui.eveningReminder', on);
+    await syncReminders(db, now());
+  };
 
   const when = next && localDay(next.date) === localDay(now()) ? 'today' : 'tomorrow';
   return (
@@ -170,9 +183,17 @@ function ReminderSetting({ enabled, hour }: { enabled: boolean; hour: number }) 
             value={String(hour)}
             onChange={pickHour}
           />
+          {hour < EVENING_HOUR ? (
+            <SwitchRow
+              testID="evening-reminder"
+              label={`Again at ${hourLabel(EVENING_HOUR)} if I have not studied`}
+              value={evening}
+              onValueChange={toggleEvening}
+            />
+          ) : null}
           <AppText variant="caption" testID="reminder-next">
-            Next one {when} at {hourLabel(hour)}. One a day at most, and none once you studied that
-            day.
+            Next one {when} at {hourLabel(next?.date.getHours() ?? hour)}. It names the work
+            waiting, and stays quiet once you studied that day.
           </AppText>
         </>
       ) : null}

@@ -10,12 +10,14 @@ import {
   buildQueue,
   SIBLING_CAP,
   spaceSiblings,
+  summarizeQueue,
   type QueueCandidate,
   type QueueEntry,
 } from '@/core/queue';
+import type { ReminderWork } from '@/core/reminders';
 import { isRecalled, Rating, usualResponseMs, type Grade } from '@/core/rating';
 import { createScheduler, type CardSchedule } from '@/core/scheduler';
-import { DAY_MS, localDay, startOfLocalDay } from '@/core/time';
+import { DAY_MS, endOfLocalDay, localDay, startOfLocalDay } from '@/core/time';
 
 import { notifyChange } from '../changes';
 import type { DbOrTx } from '../db';
@@ -230,6 +232,28 @@ export function focusQueue(db: DbOrTx, category: MistakeCategory): QueueEntry[] 
       mode: practiceMode(c),
     })),
   );
+}
+
+/**
+ * The work waiting on each of the next `days` days, today first, for the
+ * reminders to name. Today's is today's queue. A later day holds every
+ * review card due by its end, as if you did not study before then, and
+ * about a day's new words.
+ */
+export function upcomingWork(db: DbOrTx, now: Date, days: number): ReminderWork[] {
+  const today = summarizeQueue(todayQueue(db, now));
+  const waiting = waitingCardIds(db);
+  const candidates = queueCandidates(db).filter((c) => !waiting.has(c.cardId));
+  const reviews = candidates.filter((c) => c.state !== CardState.New);
+  const unmet = candidates.filter(
+    (c) => c.state === CardState.New && FIRST_CARD_TYPES.includes(c.type),
+  ).length;
+  const newWords = Math.min(unmet, dailyAllowance(db, now, candidates));
+  return Array.from({ length: days }, (_, ahead) => {
+    if (ahead === 0) return { reviews: today.due + today.newCards, newWords: today.newItems };
+    const end = endOfLocalDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() + ahead));
+    return { reviews: reviews.filter((c) => c.due < end).length, newWords };
+  });
 }
 
 export interface StudyCard {
