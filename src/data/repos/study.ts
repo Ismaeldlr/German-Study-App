@@ -3,9 +3,15 @@ import { and, desc, eq, gte, inArray, lt, ne, notInArray, sql } from 'drizzle-or
 import { CardState, displayLemma } from '@/core/cards';
 import type { MistakeNote } from '@/core/grading';
 import { confusedWith, isLeechLapse } from '@/core/leeches';
-import type { CardType, ExerciseMode } from '@/core/model';
-import { newItemAllowance, RECALL_WINDOW_DAYS } from '@/core/planner';
-import { buildQueue, SIBLING_CAP, type QueueCandidate, type QueueEntry } from '@/core/queue';
+import type { CardType, ExerciseMode, MistakeCategory } from '@/core/model';
+import { newItemAllowance, practiceMode, RECALL_WINDOW_DAYS } from '@/core/planner';
+import {
+  buildQueue,
+  SIBLING_CAP,
+  spaceSiblings,
+  type QueueCandidate,
+  type QueueEntry,
+} from '@/core/queue';
 import { isRecalled, Rating, usualResponseMs, type Grade } from '@/core/rating';
 import { createScheduler, type CardSchedule } from '@/core/scheduler';
 import { DAY_MS, startOfLocalDay } from '@/core/time';
@@ -23,6 +29,7 @@ import {
   type ItemRow,
 } from '../schema';
 import { coverage } from './exercises';
+import { grammarForCategory } from './grammar';
 import { getAllSettings } from './settings';
 import { pullForwardGrammar } from './weak-spots';
 
@@ -141,6 +148,52 @@ export function todayQueue(db: DbOrTx, now: Date): QueueEntry[] {
     pullForward: pullForwardGrammar(db, now),
     excludeCardIds: waitingCardIds(db),
   });
+}
+
+/** Cards a weak-spot drill asks at most. */
+export const FOCUS_SIZE = 10;
+
+/**
+ * A short drill on one weak spot, due or not: the grammar points about it
+ * that have a drill ready, then the cards you made those mistakes on, most
+ * recent mistake first. Cards you have not met yet stay out, and so do
+ * cards with an answer waiting to be graded. Like weak spots, a wrong
+ * meaning pick on a recognition card does not count.
+ */
+export function focusQueue(db: DbOrTx, category: MistakeCategory): QueueEntry[] {
+  const candidates = new Map(queueCandidates(db).map((c) => [c.cardId, c]));
+  const waiting = waitingCardIds(db);
+  const drillReady = coverage(db, 'grammar_drill');
+  const grammar = grammarForCategory(db, category)
+    .filter((r) => drillReady.get(r.item.id) && candidates.has(r.card.id))
+    .map((r) => candidates.get(r.card.id)!);
+  const missed = db
+    .select({ cardId: review.cardId })
+    .from(mistake)
+    .innerJoin(review, eq(mistake.reviewId, review.id))
+    .where(eq(mistake.category, category))
+    .orderBy(desc(mistake.createdAt), desc(mistake.id))
+    .all()
+    .map((r) => candidates.get(r.cardId))
+    .filter(
+      (c): c is QueueCandidate =>
+        c !== undefined && c.type !== 'recognize' && c.state !== CardState.New,
+    );
+  const seen = new Set<number>();
+  const picked = [...grammar, ...missed].filter((c) => {
+    if (seen.has(c.cardId) || waiting.has(c.cardId)) return false;
+    seen.add(c.cardId);
+    return true;
+  });
+  return spaceSiblings(
+    picked.slice(0, FOCUS_SIZE).map((c) => ({
+      cardId: c.cardId,
+      itemId: c.itemId,
+      type: c.type,
+      kind: c.state === CardState.New ? ('new_item' as const) : ('review' as const),
+      mode: practiceMode(c),
+    })),
+  );
 }
 
 export interface StudyCard {

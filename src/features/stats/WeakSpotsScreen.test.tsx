@@ -91,6 +91,14 @@ describe('Weak spots screen', () => {
       /Drilled in your next session/,
     );
 
+    // Any weak spot can be drilled right away, on the cards you missed.
+    expect(screen.getByTestId('drill-article')).toHaveTextContent(/Drill now · 2 cards/);
+    await fireEvent.press(screen.getByTestId('drill-case_ending'));
+    expect(router.push).toHaveBeenCalledWith({
+      pathname: '/study',
+      params: { focus: 'case_ending' },
+    });
+
     // No grammar point covers case endings yet: offer to add one.
     await fireEvent.press(screen.getByTestId('weak-spot-add-case_ending'));
     expect(router.push).toHaveBeenCalledWith({

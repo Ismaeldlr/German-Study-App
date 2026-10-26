@@ -8,11 +8,11 @@ import { itemsByWord, setGrade } from '@/core/drills';
 import { finisherKinds } from '@/core/finisher';
 import { fillGap, gapHint } from '@/core/gap-fill';
 import type { MistakeNote } from '@/core/grading';
-import type { ExerciseMode } from '@/core/model';
+import type { ExerciseMode, MistakeCategory } from '@/core/model';
 import { praiseFor, xpFor } from '@/core/progress';
 import type { QueueEntry } from '@/core/queue';
 import { ratingFor, type Outcome } from '@/core/rating';
-import { accuracy, progress } from '@/core/session';
+import { accuracy, progress, type SessionState } from '@/core/session';
 import { localDay } from '@/core/time';
 import type { Db } from '@/data/db';
 import { lastChatAt } from '@/data/repos/chats';
@@ -29,6 +29,7 @@ import { getSetting } from '@/data/repos/settings';
 import {
   distractorPool,
   finishStudySession,
+  focusQueue,
   getStudyCard,
   recordReview,
   spotConfusions,
@@ -50,7 +51,7 @@ import { PracticeButtons } from '../practice/PracticeButtons';
 import { syncReminders } from '../reminders';
 import { useServices } from '../services';
 import { useOnline } from '../use-online';
-import { RATING_LABELS } from '../words/describe';
+import { MISTAKE_LABELS, RATING_LABELS } from '../words/describe';
 import { Finisher } from './Finisher';
 import { GapFillQuestion } from './GapFillQuestion';
 import {
@@ -89,9 +90,10 @@ import {
  * asked as a classic card instead. A translation is graded by the LLM
  * while you wait, or saved to be graded later. The cards end at your time
  * target or when the work runs out; on finisher days a mini story or a
- * short chat follows, unless you stopped the session yourself.
+ * short chat follows, unless you stopped the session yourself. With a
+ * `focus`, it is a short drill on that weak spot instead of the daily work.
  */
-export function StudyScreen() {
+export function StudyScreen({ focus = null }: { focus?: MistakeCategory | null }) {
   const services = useServices();
   const { db, now } = services;
   const online = useOnline();
@@ -101,35 +103,34 @@ export function StudyScreen() {
   useEffect(() => {
     const state = useStudyStore.getState();
     const inProgress = state.phase !== 'idle' && state.phase !== 'done' && state.phase !== 'empty';
-    if (inProgress && state.day === localDay(now())) return;
+    if (inProgress && state.day === localDay(now()) && state.focus === focus) return;
     const time = now().getTime();
-    const queue = todayQueue(db, now());
+    // A drill started mid-session ends the session it replaces.
+    if (inProgress && state.sessionId !== null && state.session) {
+      finishStudySession(db, state.sessionId, sessionResult(state.session), time);
+    }
+    const queue = focus ? focusQueue(db, focus) : todayQueue(db, now());
     if (queue.length === 0) {
-      state.empty();
+      state.empty(focus);
       return;
     }
     state.begin(startStudySession(db, time), queue, time, {
       deadline: time + getSetting(db, 'study.sessionMinutes') * 60_000,
       present: (entry) => presentEntry(db, entry, now().getTime()),
       baseline: baselineFor(db, now()),
-      finisher: finisherKinds({ story: lastShownAt(db, 'story'), chat: lastChatAt(db) }, now()),
+      // A drill is a quick extra, so no story or chat follows it.
+      finisher: focus
+        ? []
+        : finisherKinds({ story: lastShownAt(db, 'story'), chat: lastChatAt(db) }, now()),
+      focus,
     });
-  }, [db, now]);
+  }, [db, now, focus]);
 
   // Close the session row when the session ends.
   const { phase, sessionId, session, presentation } = store;
   useEffect(() => {
     if (phase === 'done' && sessionId !== null && session) {
-      finishStudySession(
-        db,
-        sessionId,
-        {
-          cardsDone: session.answered,
-          newItems: session.newItemIds.length,
-          accuracy: accuracy(session),
-        },
-        now().getTime(),
-      );
+      finishStudySession(db, sessionId, sessionResult(session), now().getTime());
       // Once today counts toward the streak, today's reminder is dropped.
       void syncReminders(db, now());
     }
@@ -399,14 +400,15 @@ export function StudyScreen() {
   const { left, again } = session
     ? progress(session, store.entry !== null && phase !== 'feedback')
     : { left: 0, again: 0 };
+  const name = focus ? 'Drill' : 'Study';
   const title =
     phase === 'done' || phase === 'empty'
-      ? 'Study'
+      ? name
       : left
-        ? `Study · ${left} left`
+        ? `${name} · ${left} left`
         : again
-          ? `Study · ${again} coming back`
-          : 'Study';
+          ? `${name} · ${again} coming back`
+          : name;
   const header = (
     <Stack.Screen
       options={{
@@ -424,6 +426,25 @@ export function StudyScreen() {
       }}
     />
   );
+
+  if (phase === 'empty' && focus) {
+    return (
+      <Screen testID="study-empty">
+        {header}
+        <View style={styles.empty}>
+          <Text style={styles.emptyIcon}>🎯</Text>
+          <AppText variant="heading" style={{ textAlign: 'center' }}>
+            Nothing to drill for {MISTAKE_LABELS[focus].toLowerCase()} yet.
+          </AppText>
+          <AppText style={{ textAlign: 'center' }}>
+            A drill asks the cards you made these mistakes on, and grammar drills about them once
+            one is ready.
+          </AppText>
+        </View>
+        <Button label="Back" variant="secondary" onPress={() => router.back()} />
+      </Screen>
+    );
+  }
 
   if (phase === 'empty') {
     return (
@@ -568,6 +589,14 @@ export function StudyScreen() {
       )}
     </Screen>
   );
+}
+
+function sessionResult(session: SessionState) {
+  return {
+    cardsDone: session.answered,
+    newItems: session.newItemIds.length,
+    accuracy: accuracy(session),
+  };
 }
 
 /** The main card's rating, and one line per card when an exercise rated several. */
