@@ -1,7 +1,7 @@
 import { StyleSheet, View } from 'react-native';
 
 import { AppText } from './AppText';
-import { radius, spacing, useTheme } from './theme';
+import { fonts, radius, spacing, useTheme } from './theme';
 
 export interface Bar {
   /** Under the bar: a weekday, a date. */
@@ -61,7 +61,10 @@ export function BarChart({
           <AppText
             variant="caption"
             numberOfLines={1}
-            style={[styles.label, mark === i ? { color: theme.text } : null]}
+            style={[
+              styles.label,
+              mark === i ? { color: theme.text, fontFamily: fonts.black } : null,
+            ]}
           >
             {label}
           </AppText>

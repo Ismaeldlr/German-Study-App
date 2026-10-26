@@ -122,25 +122,27 @@ function PlanForm() {
       </Section>
 
       <Section title="Exam day" icon="📅">
+        <View style={{ alignItems: 'center' }}>
+          <AppText variant="heading" testID="cram-exam-day" style={{ textAlign: 'center' }}>
+            {germanDate(dateOf(examDay))}
+          </AppText>
+          <AppText variant="caption">{examIn(days)}</AppText>
+        </View>
         <View style={styles.stepper}>
           <Button
             testID="cram-earlier"
             label="Earlier"
             icon="remove"
             variant="secondary"
+            style={{ flex: 1 }}
             onPress={() => move(-1)}
           />
-          <View style={{ flex: 1, alignItems: 'center' }}>
-            <AppText variant="label" testID="cram-exam-day" style={{ textAlign: 'center' }}>
-              {germanDate(dateOf(examDay))}
-            </AppText>
-            <AppText variant="caption">{examIn(days)}</AppText>
-          </View>
           <Button
             testID="cram-later"
             label="Later"
             icon="add"
             variant="secondary"
+            style={{ flex: 1 }}
             onPress={() => move(1)}
           />
         </View>

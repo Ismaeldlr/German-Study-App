@@ -97,13 +97,13 @@ export function StatsScreen() {
           color={theme.primary}
           mark={0}
           bars={forecast.map((f, i) => ({
-            label: i === 0 ? 'heute' : weekday(f.day),
+            label: weekday(f.day),
             value: f.count,
             description: `${i === 0 ? 'Today' : f.day}: ${plural(f.count, 'review')}`,
           }))}
         />
         <AppText variant="caption">
-          {plural(forecast[0].count, 'review')} due today, overdue ones included ·{' '}
+          Today first: {plural(forecast[0].count, 'review')} due, overdue ones included ·{' '}
           {plural(
             forecast.slice(0, 7).reduce((sum, f) => sum + f.count, 0),
             'review',
@@ -193,14 +193,21 @@ export function StatsScreen() {
       >
         {report.weakSpots.length ? (
           report.weakSpots.map((spot) => (
-            <View key={spot.category} style={{ gap: spacing.sm }}>
+            <View key={spot.category} style={{ gap: 6 }}>
               <View style={styles.spotHead}>
-                <AppText variant="label" style={{ flex: 1 }}>
-                  {MISTAKE_LABELS[spot.category]}
-                </AppText>
-                <AppText variant="caption">
-                  Score {spot.score.toFixed(1)} · {plural(spot.count, 'mistake')}
-                </AppText>
+                <View style={{ flex: 1, gap: 2 }}>
+                  <AppText variant="label">{MISTAKE_LABELS[spot.category]}</AppText>
+                  <AppText variant="caption">
+                    Score {spot.score.toFixed(1)} · {plural(spot.count, 'mistake')}
+                  </AppText>
+                </View>
+                {drills.get(spot.category) ? (
+                  <DrillButton
+                    category={spot.category}
+                    cards={drills.get(spot.category)!}
+                    compact
+                  />
+                ) : null}
               </View>
               <ProgressBar
                 value={spot.score / report.weakSpots[0].score}
@@ -208,9 +215,6 @@ export function StatsScreen() {
                 track={theme.track}
                 height={8}
               />
-              {drills.get(spot.category) ? (
-                <DrillButton category={spot.category} cards={drills.get(spot.category)!} />
-              ) : null}
             </View>
           ))
         ) : (
@@ -225,7 +229,7 @@ export function StatsScreen() {
           mark={minutes.length - 1}
           format={(v) => (v < 1 ? '<1' : String(Math.round(v)))}
           bars={minutes.map((m, i) => ({
-            label: i === minutes.length - 1 ? 'heute' : weekday(m.day),
+            label: weekday(m.day),
             value: m.minutes,
             description: `${m.day}: ${minutesText(m.minutes)}`,
           }))}
@@ -329,5 +333,5 @@ const styles = StyleSheet.create({
   legend: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   dot: { width: 10, height: 10, borderRadius: 5 },
-  spotHead: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.sm },
+  spotHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
 });

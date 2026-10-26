@@ -136,13 +136,26 @@ export function WeakSpotsScreen() {
   );
 }
 
-/** Start a short drill on one weak spot: its grammar drills and the cards you missed. */
-export function DrillButton({ category, cards }: { category: MistakeCategory; cards: number }) {
+/**
+ * Start a short drill on one weak spot: its grammar drills and the cards
+ * you missed. `compact` fits it at the end of a row.
+ */
+export function DrillButton({
+  category,
+  cards,
+  compact = false,
+}: {
+  category: MistakeCategory;
+  cards: number;
+  compact?: boolean;
+}) {
   return (
     <Button
       testID={`drill-${category}`}
-      label={`Drill now · ${plural(cards, 'card')}`}
+      label={compact ? `Drill ${cards}` : `Drill now · ${plural(cards, 'card')}`}
+      accessibilityHint={`Practise ${plural(cards, 'card')} on this weak spot`}
       icon="flash-outline"
+      variant="secondary"
       onPress={() => router.push({ pathname: '/study', params: { focus: category } })}
     />
   );
