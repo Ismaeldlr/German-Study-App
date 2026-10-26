@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { useState } from 'react';
 import { Alert, View } from 'react-native';
 
@@ -61,7 +62,24 @@ export function ChaptersScreen() {
           }}
         />
       ) : (
-        <Button testID="chapter-add" label="Add a chapter" onPress={() => setEditing('new')} />
+        <Row style={{ flexWrap: 'nowrap' }}>
+          <Button
+            testID="chapter-add"
+            label="Add a chapter"
+            style={{ flex: 1 }}
+            onPress={() => setEditing('new')}
+          />
+          {chapters.length ? (
+            <Button
+              testID="chapters-cram"
+              label="Cram for an exam"
+              icon="alarm-outline"
+              variant="secondary"
+              style={{ flex: 1 }}
+              onPress={() => router.push('/cram')}
+            />
+          ) : null}
+        </Row>
       )}
       <Section title="Chapters">
         {chapters.length === 0 ? (

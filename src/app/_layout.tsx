@@ -117,6 +117,7 @@ export default function RootLayout() {
               <Stack.Screen name="usage" options={{ title: 'LLM usage' }} />
               <Stack.Screen name="add-grammar" options={{ title: 'Add a grammar point' }} />
               <Stack.Screen name="stats" options={{ title: 'Stats' }} />
+              <Stack.Screen name="cram" options={{ title: 'Cram mode' }} />
               <Stack.Screen name="weak-spots" options={{ title: 'Weak spots' }} />
               <Stack.Screen name="leeches" options={{ title: 'Leeches' }} />
               <Stack.Screen name="graded" options={{ title: 'Graded translations' }} />

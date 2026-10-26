@@ -125,7 +125,22 @@ export function StatsScreen() {
         </View>
       </Section>
 
-      <Section title="Chapters" icon="📖" testID="stats-chapters">
+      <Section
+        title="Chapters"
+        icon="📖"
+        testID="stats-chapters"
+        right={
+          report.chapters.length ? (
+            <Button
+              testID="stats-cram"
+              label="Cram"
+              icon="alarm-outline"
+              variant="ghost"
+              onPress={() => router.push('/cram')}
+            />
+          ) : null
+        }
+      >
         {report.chapters.length ? (
           report.chapters.map(({ chapter, counts }) => (
             <ListItem

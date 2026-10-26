@@ -149,6 +149,21 @@ export function todayCram(
   });
 }
 
+/** What cram mode would ask today for these chapters and exam day, before it starts. */
+export function previewCram(
+  db: DbOrTx,
+  input: { chapterIds: number[]; examDay: string },
+  now: Date,
+): CramPicks {
+  const plan = { ...input, startedAt: now.getTime() };
+  const context = { unlocked: unlockedItemIds(db, now), waiting: waitingCardIds(db) };
+  return cramPicks(cramCards(db, plan, now, context), {
+    today: localDay(now),
+    examDay: input.examDay,
+    now: now.getTime(),
+  });
+}
+
 /**
  * Today's queue. Both daily limits count what was already done today, so a
  * second session the same day does not reset them. Grammar cards come only
