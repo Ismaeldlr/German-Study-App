@@ -23,6 +23,7 @@ import { FadeIn, ProgressBar } from '@/ui/motion';
 import { radius, spacing, useTheme } from '@/ui/theme';
 import { GradientCard, IconBubble, Lemma, ProgressRing, StatChip } from '@/ui/visuals';
 
+import { PracticeButtons } from '../practice/PracticeButtons';
 import { useServices } from '../services';
 import { useLiveQuery } from '../use-live-query';
 import { useOnline } from '../use-online';
@@ -48,7 +49,7 @@ export function HomeScreen() {
     () => summarizeQueue(todayQueue(db, now())),
     ['card', 'review', 'item', 'settings', 'exercise', 'pending_grade', 'mistake', 'grammar_note'],
   );
-  const progress = useLiveQuery(() => pulse(db, now()), ['review']);
+  const progress = useLiveQuery(() => pulse(db, now()), ['review', 'chat']);
   const waiting = useLiveQuery(() => waitingGrades(db).length, ['pending_grade']);
   const graded = useLiveQuery(() => unseenGrades(db).length, ['pending_grade']);
   const leeches = useLiveQuery(() => listLeeches(db).length, ['card', 'item']);
@@ -279,6 +280,17 @@ export function HomeScreen() {
                   ? `Study today to keep your ${plural(streak.current, 'day')} going.`
                   : 'Answer one card today to start a streak.'}
             </AppText>
+          </Section>
+        </FadeIn>
+      ) : null}
+
+      {deckSize > 0 ? (
+        <FadeIn delay={110}>
+          <Section title="Mehr üben" icon="🎭" testID="home-practice">
+            <AppText variant="caption">
+              Read a mini story or chat with a character, on top of today’s cards.
+            </AppText>
+            <PracticeButtons />
           </Section>
         </FadeIn>
       ) : null}
