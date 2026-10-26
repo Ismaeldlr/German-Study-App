@@ -12,6 +12,8 @@ export interface ClientFromSettingsOptions {
   recorder: UsageRecorder;
   budget?: BudgetGuard;
   fetch?: FetchLike;
+  /** The clock usage is logged by, the same one the budget reads. */
+  now?: () => Date;
 }
 
 /** Build the client the settings describe. Switching providers is a settings change only. */
@@ -42,5 +44,6 @@ export function createLlmClientFromSettings(options: ClientFromSettingsOptions):
     recorder: options.recorder,
     budget: options.budget,
     priceFor: (m) => prices[m],
+    now: options.now,
   });
 }
