@@ -190,7 +190,8 @@ export function tokenize(sentence: string, glosses: readonly Gloss[]): SentenceT
   return tokens;
 }
 
-function glossKey(word: string): string {
+/** How a word is looked up: lowercase, no punctuation around it, no article. */
+export function glossKey(word: string): string {
   return word
     .toLowerCase()
     .replace(EDGE_NON_LETTERS, '')
