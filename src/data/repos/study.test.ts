@@ -6,10 +6,15 @@ import { DAY_MS } from '@/core/time';
 import { card, mistake, review } from '../schema';
 import { createTestDb } from '../testing/test-db';
 import { itemInput } from '../testing/fixtures';
+import { saveExercises } from './exercises';
+import { savePendingGrade } from './grading';
+import { createGrammarItem } from './grammar';
 import { createItem, setItemStatus } from './items';
 import { setSetting } from './settings';
 import {
   finishStudySession,
+  FOCUS_SIZE,
+  focusQueue,
   getStudyCard,
   newItemsIntroducedToday,
   recordReview,
@@ -223,5 +228,99 @@ describe('a week of daily review', () => {
     expect(allCards.every((c) => c.state === 2)).toBe(true);
     expect(perDay[6].reviews).toBeLessThan(allCards.length);
     expect(Math.min(...allCards.map((c) => c.due))).toBeGreaterThan(at(6).getTime());
+  });
+});
+
+describe('a weak-spot drill', () => {
+  function missed(db: Db, cardId: number, category: 'article' | 'case_ending', when: Date) {
+    recordReview(
+      db,
+      {
+        cardId,
+        rating: Rating.Again,
+        mode: 'classic',
+        responseMs: 2000,
+        answer: 'x',
+        correct: false,
+        mistakes: [{ category, yourText: 'der', correction: 'die', explanation: 'die Wohnung' }],
+      },
+      when.getTime(),
+    );
+  }
+  const cardsOf = (db: Db, itemId: number) =>
+    db.select().from(card).where(eq(card.itemId, itemId)).orderBy(card.id).all();
+
+  it('asks the grammar drill first, then the cards you missed, newest mistake first', async () => {
+    const db = await createTestDb();
+    const wohnung = createItem(db, itemInput(), day1.getTime());
+    const kueche = createItem(db, itemInput({ lemma: 'Küche' }), day1.getTime());
+    const [, , wohnungGender] = cardsOf(db, wohnung);
+    const [kuecheRecognize, , kuecheGender] = cardsOf(db, kueche);
+    missed(db, wohnungGender.id, 'article', at(0));
+    missed(db, kuecheGender.id, 'article', at(1));
+    missed(db, kuecheGender.id, 'article', at(2));
+    // Recognition mistakes and other categories stay out.
+    missed(db, kuecheRecognize.id, 'article', at(2));
+    missed(db, wohnungGender.id, 'case_ending', at(3));
+    const rule = createGrammarItem(
+      db,
+      {
+        name: 'Artikel und Genus',
+        label: 'articles',
+        summary: 'Learn every noun with its article.',
+        examples: [],
+        categories: ['article'],
+      },
+      null,
+      day1.getTime(),
+    );
+    // Without a drill ready, the grammar point cannot be asked.
+    expect(focusQueue(db, 'article').map((e) => e.cardId)).toEqual([
+      kuecheGender.id,
+      wohnungGender.id,
+    ]);
+
+    saveExercises(
+      db,
+      'grammar_drill',
+      [{ itemIds: [rule], topic: null, payload: { point: 'Artikel', items: [] }, hash: null }],
+      { provider: 'custom', model: 'mock', promptVersion: 'x@1', tokensIn: 0, tokensOut: 0 },
+      day1.getTime(),
+    );
+    const queue = focusQueue(db, 'article');
+    expect(queue.map((e) => [e.itemId, e.kind, e.mode])).toEqual([
+      [rule, 'new_item', 'grammar_drill'],
+      [kueche, 'review', 'classic'],
+      [wohnung, 'review', 'classic'],
+    ]);
+  });
+
+  it('skips cards waiting for a grade and stops at the drill size', async () => {
+    const db = await createTestDb();
+    const ids = Array.from({ length: FOCUS_SIZE + 2 }, (_, i) =>
+      createItem(db, itemInput({ lemma: `Wort${i}` }), day1.getTime()),
+    );
+    for (const id of ids) missed(db, cardsOf(db, id)[2].id, 'article', at(0));
+    const [first] = focusQueue(db, 'article');
+    savePendingGrade(db, {
+      exerciseId: null,
+      exercise: {
+        english: 'x',
+        reference: 'x',
+        targets: [{ cardId: first.cardId, itemId: first.itemId, word: 'x' }],
+      } as never,
+      answer: 'x',
+      responseMs: 1000,
+      answeredAt: at(0).getTime(),
+    });
+    const queue = focusQueue(db, 'article');
+    expect(queue).toHaveLength(FOCUS_SIZE);
+    expect(queue.map((e) => e.cardId)).not.toContain(first.cardId);
+  });
+
+  it('is empty without mistakes in the category', async () => {
+    const db = await createTestDb();
+    createItem(db, itemInput(), day1.getTime());
+    expect(focusQueue(db, 'word_order')).toEqual([]);
   });
 });

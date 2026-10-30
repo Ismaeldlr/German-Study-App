@@ -4,6 +4,8 @@ import { ActivityIndicator, View } from 'react-native';
 
 import { lemmaKey } from '@/core/duplicates';
 import { emptyGrammarFields, validateGrammar, type GrammarFields } from '@/core/grammar';
+import { searchTopics } from '@/curriculum';
+import { topicProgress } from '@/data/repos/curriculum';
 import { createGrammarItem } from '@/data/repos/grammar';
 import { allLemmas } from '@/data/repos/items';
 import { getSetting } from '@/data/repos/settings';
@@ -14,7 +16,9 @@ import { Banner, Row, Screen, Section } from '@/ui/layout';
 import { GermanField, UmlautBar } from '@/ui/umlaut';
 
 import { ChapterPicker } from '../chapters/ChapterPicker';
+import { TopicRow } from '../grammar/parts';
 import { useServices } from '../services';
+import { useLiveQuery } from '../use-live-query';
 import { useOnline } from '../use-online';
 import { describeGrammarPoint } from './grammar';
 import { GrammarForm } from './GrammarForm';
@@ -29,6 +33,8 @@ type Step =
 /**
  * Name a grammar point; the LLM writes a short English summary and three
  * examples; you check them and save. It is then drilled like any card.
+ * Topics the grammar path already covers show up as you type, so you can
+ * use those for free instead.
  */
 export function AddGrammarScreen({ initialName = '' }: { initialName?: string }) {
   const services = useServices();
@@ -41,6 +47,8 @@ export function AddGrammarScreen({ initialName = '' }: { initialName?: string })
   const [saved, setSaved] = useState<string | null>(null);
   const [formKey, setFormKey] = useState(0);
   const abort = useRef<AbortController | null>(null);
+  const progress = useLiveQuery(() => topicProgress(db), ['item', 'card']);
+  const builtIn = name.trim().length >= 2 ? searchTopics(name).slice(0, 3) : [];
 
   const existing = (text: string) =>
     allLemmas(db).find((l) => l.kind === 'grammar' && lemmaKey(l.lemma) === lemmaKey(text));
@@ -133,6 +141,17 @@ export function AddGrammarScreen({ initialName = '' }: { initialName?: string })
               onPress={byHand}
             />
           </Row>
+        </Section>
+      ) : null}
+
+      {step.name === 'input' && builtIn.length ? (
+        <Section title="Already in the grammar path" icon="🧩" testID="grammar-built-in">
+          <AppText variant="caption">
+            Written up with practice included: free, and it works offline.
+          </AppText>
+          {builtIn.map((t) => (
+            <TopicRow key={t.id} topic={t} progress={progress.get(t.id)} />
+          ))}
         </Section>
       ) : null}
 

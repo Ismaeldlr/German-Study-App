@@ -1,0 +1,24 @@
+# Export a backup through the share sheet; the app remembers when you last did.
+appId: com.ismaeldlr.germanstudy
+name: Export a backup
+tags:
+  - export
+---
+- runFlow: subflows/launch-fresh.yaml
+- tapOn: Settings
+- scrollUntilVisible:
+    element:
+      id: export-backup
+    direction: DOWN
+- assertVisible: .*Never exported\..*
+- tapOn:
+    id: export-backup
+# The system share sheet offers the backup file.
+- extendedWaitUntil:
+    visible:
+      text: .*(Share|german-study-backup).*
+    timeout: 10000
+- back
+- extendedWaitUntil:
+    visible: .*Last export:.*
+    timeout: 10000

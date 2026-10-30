@@ -2,13 +2,22 @@ import { and, desc, eq, gte, inArray, lt, ne, notInArray, sql } from 'drizzle-or
 
 import { CardState, displayLemma } from '@/core/cards';
 import type { MistakeNote } from '@/core/grading';
+import { cramPicks, cramRecall, type CramPicks } from '@/core/cram';
 import { confusedWith, isLeechLapse } from '@/core/leeches';
-import type { CardType, ExerciseMode } from '@/core/model';
-import { newItemAllowance, RECALL_WINDOW_DAYS } from '@/core/planner';
-import { buildQueue, SIBLING_CAP, type QueueCandidate, type QueueEntry } from '@/core/queue';
+import type { CardType, ExerciseMode, MistakeCategory } from '@/core/model';
+import { newItemAllowance, practiceMode, RECALL_WINDOW_DAYS } from '@/core/planner';
+import {
+  buildQueue,
+  SIBLING_CAP,
+  spaceSiblings,
+  summarizeQueue,
+  type QueueCandidate,
+  type QueueEntry,
+} from '@/core/queue';
+import type { ReminderWork } from '@/core/reminders';
 import { isRecalled, Rating, usualResponseMs, type Grade } from '@/core/rating';
 import { createScheduler, type CardSchedule } from '@/core/scheduler';
-import { DAY_MS, startOfLocalDay } from '@/core/time';
+import { DAY_MS, endOfLocalDay, localDay, startOfLocalDay } from '@/core/time';
 
 import { notifyChange } from '../changes';
 import type { DbOrTx } from '../db';
@@ -22,7 +31,9 @@ import {
   type CardRow,
   type ItemRow,
 } from '../schema';
-import { coverage } from './exercises';
+import { activeCram, cramCards, isCrammed } from './cram';
+import { drillReadyItems } from './curriculum';
+import { grammarForCategory } from './grammar';
 import { getAllSettings } from './settings';
 import { pullForwardGrammar } from './weak-spots';
 
@@ -125,21 +136,123 @@ export function waitingCardIds(db: DbOrTx): Set<number> {
   return new Set(rows.flatMap((r) => r.exercise.targets.map((t) => t.cardId)));
 }
 
+/** Cram mode's work for today, or null when it is off or the exam is over. */
+export function todayCram(
+  db: DbOrTx,
+  now: Date,
+  context = { unlocked: unlockedItemIds(db, now), waiting: waitingCardIds(db) },
+): CramPicks | null {
+  const plan = activeCram(db, now);
+  if (!plan) return null;
+  return cramPicks(cramCards(db, plan, now, context), {
+    today: localDay(now),
+    examDay: plan.examDay,
+    now: now.getTime(),
+  });
+}
+
+/** What cram mode would ask today for these chapters and exam day, before it starts. */
+export function previewCram(
+  db: DbOrTx,
+  input: { chapterIds: number[]; examDay: string },
+  now: Date,
+): CramPicks {
+  const plan = { ...input, startedAt: now.getTime() };
+  const context = { unlocked: unlockedItemIds(db, now), waiting: waitingCardIds(db) };
+  return cramPicks(cramCards(db, plan, now, context), {
+    today: localDay(now),
+    examDay: input.examDay,
+    now: now.getTime(),
+  });
+}
+
 /**
  * Today's queue. Both daily limits count what was already done today, so a
  * second session the same day does not reset them. Grammar cards come only
  * with a drill ready, and cards with an answer waiting to be graded wait too.
+ * In cram mode, the exam's cards for today join in.
  */
 export function todayQueue(db: DbOrTx, now: Date): QueueEntry[] {
   const candidates = queueCandidates(db);
+  const unlocked = unlockedItemIds(db, now);
+  const waiting = waitingCardIds(db);
   return buildQueue(candidates, {
     now: now.getTime(),
     newItemsAllowance: dailyAllowance(db, now, candidates) - newItemsIntroducedToday(db, now),
-    unlockedItemIds: unlockedItemIds(db, now),
+    unlockedItemIds: unlocked,
     siblingCap: SIBLING_CAP - newSiblingCardsToday(db, now),
-    drillReady: new Set(coverage(db, 'grammar_drill').keys()),
+    drillReady: drillReadyItems(db),
     pullForward: pullForwardGrammar(db, now),
-    excludeCardIds: waitingCardIds(db),
+    excludeCardIds: waiting,
+    cram: todayCram(db, now, { unlocked, waiting }) ?? undefined,
+  });
+}
+
+/** Cards a weak-spot drill asks at most. */
+export const FOCUS_SIZE = 10;
+
+/**
+ * A short drill on one weak spot, due or not: the grammar points about it
+ * that have a drill ready, then the cards you made those mistakes on, most
+ * recent mistake first. Cards you have not met yet stay out, and so do
+ * cards with an answer waiting to be graded. Like weak spots, a wrong
+ * meaning pick on a recognition card does not count.
+ */
+export function focusQueue(db: DbOrTx, category: MistakeCategory): QueueEntry[] {
+  const candidates = new Map(queueCandidates(db).map((c) => [c.cardId, c]));
+  const waiting = waitingCardIds(db);
+  const drillReady = drillReadyItems(db);
+  const grammar = grammarForCategory(db, category)
+    .filter((r) => drillReady.has(r.item.id) && candidates.has(r.card.id))
+    .map((r) => candidates.get(r.card.id)!);
+  const missed = db
+    .select({ cardId: review.cardId })
+    .from(mistake)
+    .innerJoin(review, eq(mistake.reviewId, review.id))
+    .where(eq(mistake.category, category))
+    .orderBy(desc(mistake.createdAt), desc(mistake.id))
+    .all()
+    .map((r) => candidates.get(r.cardId))
+    .filter(
+      (c): c is QueueCandidate =>
+        c !== undefined && c.type !== 'recognize' && c.state !== CardState.New,
+    );
+  const seen = new Set<number>();
+  const picked = [...grammar, ...missed].filter((c) => {
+    if (seen.has(c.cardId) || waiting.has(c.cardId)) return false;
+    seen.add(c.cardId);
+    return true;
+  });
+  return spaceSiblings(
+    picked.slice(0, FOCUS_SIZE).map((c) => ({
+      cardId: c.cardId,
+      itemId: c.itemId,
+      type: c.type,
+      kind: c.state === CardState.New ? ('new_item' as const) : ('review' as const),
+      mode: practiceMode(c),
+    })),
+  );
+}
+
+/**
+ * The work waiting on each of the next `days` days, today first, for the
+ * reminders to name. Today's is today's queue. A later day holds every
+ * review card due by its end, as if you did not study before then, and
+ * about a day's new words.
+ */
+export function upcomingWork(db: DbOrTx, now: Date, days: number): ReminderWork[] {
+  const today = summarizeQueue(todayQueue(db, now));
+  const waiting = waitingCardIds(db);
+  const candidates = queueCandidates(db).filter((c) => !waiting.has(c.cardId));
+  const reviews = candidates.filter((c) => c.state !== CardState.New);
+  const unmet = candidates.filter(
+    (c) => c.state === CardState.New && FIRST_CARD_TYPES.includes(c.type),
+  ).length;
+  const newWords = Math.min(unmet, dailyAllowance(db, now, candidates));
+  return Array.from({ length: days }, (_, ahead) => {
+    if (ahead === 0) return { reviews: today.due + today.newCards, newWords: today.newItems };
+    const end = endOfLocalDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() + ahead));
+    return { reviews: reviews.filter((c) => c.due < end).length, newWords };
   });
 }
 
@@ -194,15 +307,16 @@ export interface ReviewInput {
  * Grade a card: update its FSRS state and log the review (and any mistakes)
  * in a single transaction, written the moment you answer. A lapse that
  * makes the card a leech flags it, and a wrong word that is another deck
- * word is logged as a confusion between the two.
+ * word is logged as a confusion between the two. A card being crammed for
+ * an exam is scheduled at the higher cram target recall.
  */
 export function recordReview(db: DbOrTx, input: ReviewInput, now: number): CardSchedule {
-  const targetRecall = getAllSettings(db)['study.targetRecall'];
-  const scheduler = createScheduler({ targetRecall });
+  const usualRecall = getAllSettings(db)['study.targetRecall'];
   const next = db.transaction((tx) => {
     const current = tx.select().from(card).where(eq(card.id, input.cardId)).get();
     if (!current) throw new Error(`Card ${input.cardId} not found`);
-    const schedule = scheduler.review(current, input.rating, now);
+    const targetRecall = cramRecall(usualRecall, isCrammed(tx, current.itemId, now));
+    const schedule = createScheduler({ targetRecall }).review(current, input.rating, now);
     const leech = schedule.lapses > current.lapses && isLeechLapse(schedule.lapses);
     tx.update(card)
       .set({ ...schedule, ...(leech ? { leechAt: now } : {}) })

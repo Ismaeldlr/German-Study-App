@@ -1,5 +1,5 @@
 import { addDays, streakFor, type StreakInfo } from './progress';
-import { nextReminder, projectStreak, reminderPlan, reminderText } from './reminders';
+import { nextReminder, projectStreak, reminderPlan, reminderText, workText } from './reminders';
 import { localDay } from './time';
 
 const streak = (over: Partial<StreakInfo>): StreakInfo => ({
@@ -129,5 +129,59 @@ describe('reminder text', () => {
     for (const { title, body } of texts) {
       expect(`${title} ${body}`).not.toMatch(/lose|losing|lost|miss|don't|forget|break|sad/i);
     }
+  });
+});
+
+describe('naming the work', () => {
+  it('says what is waiting', () => {
+    expect(workText({ reviews: 23, newWords: 4 })).toBe('23 reviews and 4 new words are waiting.');
+    expect(workText({ reviews: 1, newWords: 0 })).toBe('1 review is waiting.');
+    expect(workText({ reviews: 0, newWords: 1 })).toBe('1 new word is waiting.');
+    expect(workText({ reviews: 0, newWords: 0 })).toBe('');
+    expect(workText(null)).toBe('');
+  });
+
+  it('puts the work before the streak', () => {
+    expect(reminderText(5, 0, { reviews: 12, newWords: 3 }).body).toBe(
+      '12 reviews and 3 new words are waiting. Keep your 5-day streak going.',
+    );
+  });
+
+  it('names each day’s work in the plan', () => {
+    const morning = new Date(2026, 9, 25, 9, 30);
+    const plan = reminderPlan(streak({ current: 2 }), 19, morning, 2, {
+      workOn: (ahead) => ({ reviews: 10 + ahead, newWords: 0 }),
+    });
+    expect(plan.map((r) => r.body)).toEqual([
+      '10 reviews are waiting. Keep your 2-day streak going.',
+      '11 reviews are waiting. A few minutes is all it takes to start a streak.',
+    ]);
+  });
+});
+
+describe('evening reminder', () => {
+  const morning = new Date(2026, 9, 25, 9, 30);
+
+  it('adds a second reminder at 21:00 on each day', () => {
+    const plan = reminderPlan(streak({ current: 4 }), 7, morning, 2, { evening: true });
+    expect(plan.map((r) => [localDay(r.date), r.date.getHours(), r.title])).toEqual([
+      ['2026-10-25', 21, 'Noch Zeit heute 🌙'],
+      // Missing today ends a streak with no freezes, so tomorrow invites a fresh start.
+      ['2026-10-26', 7, 'Deine Wörter warten 📚'],
+      ['2026-10-26', 21, 'Noch Zeit heute 🌙'],
+    ]);
+  });
+
+  it('skips both once you studied, and has nothing to add to a late first reminder', () => {
+    const studied = reminderPlan(streak({ current: 4, activeToday: true }), 19, morning, 1, {
+      evening: true,
+    });
+    expect(studied.map((r) => [localDay(r.date), r.date.getHours()])).toEqual([
+      ['2026-10-26', 19],
+      ['2026-10-26', 21],
+    ]);
+    const late = reminderPlan(streak({}), 21, morning, 3, { evening: true });
+    expect(late).toHaveLength(3);
+    expect(nextReminder(streak({}), 7, morning, { evening: true })?.date.getHours()).toBe(21);
   });
 });

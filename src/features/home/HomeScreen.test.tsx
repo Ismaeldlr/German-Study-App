@@ -1,7 +1,6 @@
 import { act, fireEvent, screen } from '@testing-library/react-native';
 import { router } from 'expo-router';
 import { eq } from 'drizzle-orm';
-import { Alert } from 'react-native';
 
 import { createChapter, listChapters } from '@/data/repos/chapters';
 import { createItem } from '@/data/repos/items';
@@ -114,7 +113,7 @@ describe('Chapters screen', () => {
     expect(screen.getByText('1. Zu Hause  · current')).toBeOnTheScreen();
   });
 
-  it('refuses a duplicate chapter number and deletes a chapter', async () => {
+  it('refuses a duplicate chapter number and opens a chapter', async () => {
     const services = await createTestServices();
     const id = createChapter(services.db, { number: 1, title: 'Eins', themes: [] });
     setSetting(services.db, 'study.currentChapterId', id);
@@ -132,12 +131,9 @@ describe('Chapters screen', () => {
 
     await fireEvent.press(screen.getByRole('button', { name: 'Cancel' }));
     await fireEvent.press(screen.getByText('1. Eins  · current'));
-    const alert = jest.spyOn(Alert, 'alert').mockImplementation((_t, _m, buttons) => {
-      buttons?.find((b) => b.style === 'destructive')?.onPress?.();
+    expect(router.push).toHaveBeenCalledWith({
+      pathname: '/chapter/[id]',
+      params: { id: String(id) },
     });
-    await fireEvent.press(screen.getByRole('button', { name: 'Delete chapter' }));
-    expect(listChapters(services.db)).toEqual([]);
-    expect(getSetting(services.db, 'study.currentChapterId')).toBeNull();
-    alert.mockRestore();
   });
 });

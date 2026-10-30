@@ -1,4 +1,4 @@
-import type { CardType, GrammaticalCase, MistakeCategory } from '@/core/model';
+import type { CardType, ExerciseMode, GrammaticalCase, MistakeCategory } from '@/core/model';
 import { DAY_MS } from '@/core/time';
 import type { TargetVerdict } from '@/core/translation';
 
@@ -16,6 +16,16 @@ export const CASE_LABELS: Record<GrammaticalCase, string> = {
   dat: 'Dativ',
   gen: 'Genitiv',
   akk_dat: 'Akkusativ or Dativ',
+};
+
+export const EXERCISE_MODE_LABELS: Record<ExerciseMode, string> = {
+  classic: 'Classic cards',
+  gap_fill: 'Gap fills',
+  translation: 'Translations',
+  grammar_drill: 'Grammar drills',
+  contrast: 'Mix-up sets',
+  story: 'Stories',
+  chat: 'Chats',
 };
 
 export const RATING_LABELS: Record<number, string> = {

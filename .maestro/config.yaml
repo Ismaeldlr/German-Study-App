@@ -1,0 +1,5 @@
+# Maestro runs every flow in this folder; subflows/ holds shared steps.
+flows:
+  - '*'
+executionOrder:
+  continueOnFailure: true

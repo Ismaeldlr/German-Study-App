@@ -17,6 +17,12 @@ const modelPrice = z.object({
 });
 export type ModelPrice = z.infer<typeof modelPrice>;
 
+const cramPlan = z.object({
+  chapterIds: z.array(z.number().int()).min(1),
+  examDay: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  startedAt: z.number(),
+});
+
 export const settingsSchema = {
   'llm.provider': z.enum(PROVIDER_IDS),
   'llm.model': z.string(),
@@ -37,12 +43,16 @@ export const settingsSchema = {
   'study.currentChapterId': z.number().int().nullable(),
   /** Daily XP goal; about 30 XP is a minute of study. */
   'study.dailyGoalXp': z.number().int().min(10).max(1000),
+  /** Cram mode: chapters to have ready for an exam. Null when off. */
+  'study.cram': cramPlan.nullable(),
   /** Vibrate on right and wrong answers. */
   'ui.haptics': z.boolean(),
   /** One study reminder a day, skipped once you studied. Off until you turn it on. */
   'ui.reminderEnabled': z.boolean(),
   /** Local hour the reminder fires at. */
   'ui.reminderHour': z.number().int().min(0).max(23),
+  /** A second reminder in the evening, on days you have not studied by then. */
+  'ui.eveningReminder': z.boolean(),
   /** When the last backup was exported, for the weekly nudge. */
   'data.lastExportAt': z.number().nullable(),
 } as const;
@@ -64,9 +74,11 @@ export const SETTING_DEFAULTS: SettingsValues = {
   'study.interests': [],
   'study.currentChapterId': null,
   'study.dailyGoalXp': 100,
+  'study.cram': null,
   'ui.haptics': true,
   'ui.reminderEnabled': false,
   'ui.reminderHour': 19,
+  'ui.eveningReminder': false,
   'data.lastExportAt': null,
 };
 

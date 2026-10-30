@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 
 import { createItem } from '@/data/repos/items';
 import { setSetting } from '@/data/repos/settings';
-import { card, review, studySession } from '@/data/schema';
+import { card, mistake, review, studySession } from '@/data/schema';
 import { itemInput, verbInput } from '@/data/testing/fixtures';
 import { UmlautProvider } from '@/ui/umlaut';
 
@@ -208,6 +208,70 @@ describe('Study screen', () => {
     expect([...seen].sort()).toEqual(['gender', 'plural', 'produce', 'verb_forms']);
     // Each new card came back once from its short learning step, then graduated.
     expect(screen.getByTestId('summary-cards')).toHaveTextContent('10 cards done');
+  });
+
+  it('drills one weak spot on cards that are not due, and ends without a finisher', async () => {
+    const clock = { t: new Date(2026, 9, 19, 9).getTime() };
+    const services = await deck(clock);
+    const gender = services.db
+      .select()
+      .from(card)
+      .all()
+      .find((c) => c.itemId === 1 && c.type === 'gender')!;
+    services.db
+      .update(card)
+      .set({
+        state: 2,
+        stability: 20,
+        difficulty: 5,
+        due: clock.t + 9 * DAY,
+        reps: 4,
+        lastReview: clock.t - 11 * DAY,
+        scheduledDays: 20,
+      })
+      .where(eq(card.id, gender.id))
+      .run();
+    services.db
+      .insert(review)
+      .values({
+        cardId: gender.id,
+        reviewedAt: clock.t - 11 * DAY,
+        rating: 1,
+        mode: 'classic',
+        correct: false,
+        stateBefore: 2,
+      })
+      .run();
+    const [logged] = services.db.select().from(review).all();
+    services.db
+      .insert(mistake)
+      .values({
+        reviewId: logged.id,
+        itemId: 1,
+        category: 'article',
+        yourText: 'der',
+        correction: 'die',
+        createdAt: clock.t - 11 * DAY,
+      })
+      .run();
+    await renderWithServices(
+      <UmlautProvider>
+        <StudyScreen focus="article" />
+      </UmlautProvider>,
+      services,
+    );
+
+    expect(await screen.findByText('Which article?')).toBeOnTheScreen();
+    await fireEvent.press(screen.getByRole('button', { name: 'die' }));
+    expect(await screen.findByText('Right!')).toBeOnTheScreen();
+    await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByTestId('study-summary')).toBeOnTheScreen();
+    expect(screen.getByTestId('summary-cards')).toHaveTextContent('1 card done');
+  });
+
+  it('says so when a weak spot has nothing to drill', async () => {
+    await renderWithServices(<StudyScreen focus="word_order" />);
+    expect(await screen.findByText('Nothing to drill for word order yet.')).toBeOnTheScreen();
   });
 
   it('says so when there is nothing to study', async () => {

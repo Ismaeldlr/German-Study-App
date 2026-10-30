@@ -5,7 +5,7 @@ import type { ContrastSet, GrammarDrill } from '@/core/drills';
 import type { FinisherKind } from '@/core/finisher';
 import type { GapExercise, GapHint } from '@/core/gap-fill';
 import type { MistakeNote } from '@/core/grading';
-import type { CardType } from '@/core/model';
+import type { CardType, MistakeCategory } from '@/core/model';
 import type { QueueEntry } from '@/core/queue';
 import type { Grade } from '@/core/rating';
 import {
@@ -117,6 +117,10 @@ interface StudyStore {
   baseline: Baseline | null;
   /** The finishers to offer once the cards are done, best first; empty on other days. */
   finisher: FinisherKind[];
+  /** The weak spot a drill works on; null for the daily session. */
+  focus: MistakeCategory | null;
+  /** The grammar topics a practice session is on, comma-separated; null otherwise. */
+  topics: string | null;
   present: (entry: QueueEntry) => Presentation;
   begin(
     sessionId: number,
@@ -127,9 +131,11 @@ interface StudyStore {
       present?: (entry: QueueEntry) => Presentation;
       baseline?: Baseline | null;
       finisher?: FinisherKind[];
+      focus?: MistakeCategory | null;
+      topics?: string | null;
     },
   ): void;
-  empty(): void;
+  empty(focus?: MistakeCategory | null, topics?: string | null): void;
   next(now: number): void;
   showQuestion(now: number): void;
   /** Ask the current card as a classic card instead, after a bad sentence. */
@@ -169,6 +175,8 @@ const initial = {
   bestCombo: 0,
   baseline: null,
   finisher: [] as FinisherKind[],
+  focus: null as MistakeCategory | null,
+  topics: null as string | null,
   present: () => CLASSIC,
 };
 
@@ -183,11 +191,13 @@ export const useStudyStore = create<StudyStore>((set, get) => ({
       present: options.present ?? (() => CLASSIC),
       baseline: options.baseline ?? null,
       finisher: options.finisher ?? [],
+      focus: options.focus ?? null,
+      topics: options.topics ?? null,
     });
     get().next(now);
   },
-  empty() {
-    set({ ...initial, phase: 'empty' });
+  empty(focus = null, topics = null) {
+    set({ ...initial, phase: 'empty', focus, topics });
   },
   next(now) {
     const { present } = get();

@@ -198,6 +198,12 @@ export function ProgressScreen() {
         <AppText variant="caption">Tap Study every day and they unlock on their own.</AppText>
       </Section>
 
+      <Button
+        testID="progress-stats"
+        label="Stats: recall, forecast, chapters"
+        icon="stats-chart-outline"
+        onPress={() => router.push('/stats')}
+      />
       <Row style={{ flexWrap: 'nowrap' }}>
         <Button
           label="Weak spots"

@@ -1,8 +1,11 @@
 import { router } from 'expo-router';
 import { View } from 'react-native';
 
+import { plural } from '@/core/format';
+import type { MistakeCategory } from '@/core/model';
 import { topWeakSpot, WEAK_SPOT_HALF_LIFE_DAYS } from '@/core/weak-spots';
 import { grammarForCategory } from '@/data/repos/grammar';
+import { focusQueue } from '@/data/repos/study';
 import { pullForwardGrammar, weakSpotExamples, weakSpots } from '@/data/repos/weak-spots';
 import { AppText } from '@/ui/AppText';
 import { Button } from '@/ui/Button';
@@ -22,12 +25,13 @@ import {
 /**
  * Your mistakes by category, scored so that recent ones weigh most: each
  * score halves every two weeks without new errors. The top one pulls its
- * grammar points into your next session.
+ * grammar points into your next session, and any of them can be drilled
+ * right away.
  */
 export function WeakSpotsScreen() {
   const { db, now } = useServices();
   const theme = useTheme();
-  const tables = ['mistake', 'item', 'card', 'grammar_note'] as const;
+  const tables = ['mistake', 'item', 'card', 'grammar_note', 'exercise', 'pending_grade'] as const;
   const spots = useLiveQuery(() => weakSpots(db, now()), tables);
   const pulled = useLiveQuery(() => pullForwardGrammar(db, now()), tables);
   const details = useLiveQuery(
@@ -38,6 +42,7 @@ export function WeakSpotsScreen() {
           {
             examples: weakSpotExamples(db, s.category),
             grammar: grammarForCategory(db, s.category).map((g) => g.item),
+            drill: focusQueue(db, s.category).length,
           },
         ]),
       ),
@@ -91,6 +96,7 @@ export function WeakSpotsScreen() {
               Score {spot.score.toFixed(1)} · {spot.count}{' '}
               {spot.count === 1 ? 'mistake' : 'mistakes'} · last on {shortDate(spot.lastAt)}
             </AppText>
+            {detail?.drill ? <DrillButton category={spot.category} cards={detail.drill} /> : null}
             {detail?.examples.map((m) => (
               <ListItem
                 key={m.id}
@@ -127,5 +133,30 @@ export function WeakSpotsScreen() {
         );
       })}
     </Screen>
+  );
+}
+
+/**
+ * Start a short drill on one weak spot: its grammar drills and the cards
+ * you missed. `compact` fits it at the end of a row.
+ */
+export function DrillButton({
+  category,
+  cards,
+  compact = false,
+}: {
+  category: MistakeCategory;
+  cards: number;
+  compact?: boolean;
+}) {
+  return (
+    <Button
+      testID={`drill-${category}`}
+      label={compact ? `Drill ${cards}` : `Drill now · ${plural(cards, 'card')}`}
+      accessibilityHint={`Practise ${plural(cards, 'card')} on this weak spot`}
+      icon="flash-outline"
+      variant="secondary"
+      onPress={() => router.push({ pathname: '/study', params: { focus: category } })}
+    />
   );
 }

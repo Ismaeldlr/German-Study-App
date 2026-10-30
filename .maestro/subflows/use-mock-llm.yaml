@@ -1,0 +1,40 @@
+# Point the app at the local mock LLM: `node scripts/mock-llm-server.js` on the host.
+# The Android emulator reaches the host at 10.0.2.2.
+appId: com.ismaeldlr.germanstudy
+---
+- tapOn: Settings
+- scrollUntilVisible:
+    element:
+      id: provider-custom
+    direction: DOWN
+- tapOn:
+    id: provider-custom
+- tapOn:
+    id: custom-base-url
+- inputText: http://10.0.2.2:8787/v1
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: model
+    direction: DOWN
+- tapOn:
+    id: model
+- inputText: mock-mini
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: api-key-input
+    direction: DOWN
+- tapOn:
+    id: api-key-input
+- inputText: test-key
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: api-key-save
+    direction: DOWN
+- tapOn:
+    id: api-key-save
+- assertVisible:
+    id: api-key-saved
+- tapOn: Home

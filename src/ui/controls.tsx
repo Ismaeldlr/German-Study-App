@@ -74,7 +74,7 @@ export function stateColors(theme: Palette, state: PillState) {
     case 'new':
       return { bg: theme.primarySoft, fg: theme.primary, dot: theme.primary };
     case 'learning':
-      return { bg: theme.warningBg, fg: theme.warningText, dot: theme.warning };
+      return { bg: theme.streakSoft, fg: theme.streakText, dot: theme.streak };
     case 'young':
       return { bg: theme.successBg, fg: theme.successText, dot: theme.success };
     case 'mature':

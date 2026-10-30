@@ -2,17 +2,19 @@ import { router } from 'expo-router';
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { cramLeftToday, daysBetween, isCramActive } from '@/core/cram';
 import { formatUsd, plural } from '@/core/format';
 import { addDays, germanDate, goalMet, greeting, pickForDay, WEEKDAYS_DE } from '@/core/progress';
 import { summarizeQueue } from '@/core/queue';
 import { DAY_MS, localDay } from '@/core/time';
 import { chapterLabel, getChapter } from '@/data/repos/chapters';
+import { getCramPlan } from '@/data/repos/cram';
 import { unseenGrades, waitingGrades } from '@/data/repos/grading';
 import { allLemmas } from '@/data/repos/items';
 import { listLeeches } from '@/data/repos/leeches';
 import { pulse, wordOfTheDayPool } from '@/data/repos/progress';
 import { getAllSettings } from '@/data/repos/settings';
-import { todayQueue } from '@/data/repos/study';
+import { todayCram, todayQueue } from '@/data/repos/study';
 import { pendingSuggestions } from '@/data/repos/suggestions';
 import { monthToDate } from '@/data/repos/usage';
 import { weakSpots } from '@/data/repos/weak-spots';
@@ -23,6 +25,8 @@ import { FadeIn, ProgressBar } from '@/ui/motion';
 import { radius, spacing, useTheme } from '@/ui/theme';
 import { GradientCard, IconBubble, Lemma, ProgressRing, StatChip } from '@/ui/visuals';
 
+import { examIn } from '../chapters/CramScreen';
+import { GrammarHomeCard } from '../grammar/GrammarHomeCard';
 import { PracticeButtons } from '../practice/PracticeButtons';
 import { useServices } from '../services';
 import { useLiveQuery } from '../use-live-query';
@@ -57,6 +61,17 @@ export function HomeScreen() {
   const deckSize = useLiveQuery(() => allLemmas(db).length, ['item']);
   const suggestions = useLiveQuery(() => pendingSuggestions(db).length, ['suggestion']);
   const wordPool = useLiveQuery(() => wordOfTheDayPool(db), ['item']);
+  const cram = useLiveQuery(() => {
+    const plan = getCramPlan(db);
+    if (!plan) return null;
+    const active = isCramActive(plan, localDay(now()));
+    const picks = active ? todayCram(db, now()) : null;
+    return {
+      days: daysBetween(localDay(now()), plan.examDay),
+      active,
+      left: picks ? cramLeftToday(picks) : 0,
+    };
+  }, ['settings', 'card', 'review', 'item', 'exercise', 'pending_grade']);
   const chapterId = settings['study.currentChapterId'];
   const chapter = useLiveQuery(
     () => (chapterId ? getChapter(db, chapterId) : undefined),
@@ -146,7 +161,8 @@ export function HomeScreen() {
               Start your deck
             </AppText>
             <AppText style={{ textAlign: 'center' }}>
-              Paste the vocabulary list from class, or add words one by one.
+              Paste the vocabulary list from class, or add words one by one. The grammar path below
+              works right away.
             </AppText>
           </View>
           <Row style={{ flexWrap: 'nowrap' }}>
@@ -247,6 +263,26 @@ export function HomeScreen() {
           </GradientCard>
         </FadeIn>
       )}
+
+      <FadeIn delay={60}>
+        <GrammarHomeCard />
+      </FadeIn>
+
+      {cram ? (
+        <Nudge icon="📅" testID="cram-banner" bg={theme.primarySoft}>
+          <AppText>
+            {cram.active
+              ? `Prüfung ${examIn(cram.days)}: ${cram.left ? `${plural(cram.left, 'cram card')} today.` : 'today’s cram work is done.'}`
+              : 'Your exam is over. Hoffentlich lief es gut!'}
+          </AppText>
+          <Button
+            testID="home-cram"
+            label={cram.active ? 'Cram plan' : 'Wrap up cram mode'}
+            variant="secondary"
+            onPress={() => router.push('/cram')}
+          />
+        </Nudge>
+      ) : null}
 
       {deckSize > 0 ? (
         <FadeIn delay={80}>

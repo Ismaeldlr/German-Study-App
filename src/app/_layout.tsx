@@ -111,11 +111,16 @@ export default function RootLayout() {
               <Stack.Screen name="add" options={{ title: 'Add a word' }} />
               <Stack.Screen name="paste" options={{ title: 'Paste a list' }} />
               <Stack.Screen name="chapters" options={{ title: 'Chapters' }} />
+              <Stack.Screen name="chapter/[id]" options={{ title: 'Chapter' }} />
               <Stack.Screen name="item/[id]" options={{ title: 'Word' }} />
               <Stack.Screen name="edit/[id]" options={{ title: 'Edit word' }} />
               <Stack.Screen name="suggestions" options={{ title: 'Suggested words' }} />
               <Stack.Screen name="usage" options={{ title: 'LLM usage' }} />
               <Stack.Screen name="add-grammar" options={{ title: 'Add a grammar point' }} />
+              <Stack.Screen name="topic/[id]" options={{ title: 'Grammar' }} />
+              <Stack.Screen name="lesson/[ref]" options={{ title: 'Lektion' }} />
+              <Stack.Screen name="stats" options={{ title: 'Stats' }} />
+              <Stack.Screen name="cram" options={{ title: 'Cram mode' }} />
               <Stack.Screen name="weak-spots" options={{ title: 'Weak spots' }} />
               <Stack.Screen name="leeches" options={{ title: 'Leeches' }} />
               <Stack.Screen name="graded" options={{ title: 'Graded translations' }} />

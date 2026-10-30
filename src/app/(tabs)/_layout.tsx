@@ -51,6 +51,10 @@ export default function TabLayout() {
         options={{ title: 'Home', headerShown: false, tabBarIcon: icon('home', 'home-outline') }}
       />
       <Tabs.Screen
+        name="grammar"
+        options={{ title: 'Grammar', tabBarIcon: icon('school', 'school-outline') }}
+      />
+      <Tabs.Screen
         name="progress"
         options={{
           title: 'Progress',
