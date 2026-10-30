@@ -21,12 +21,19 @@ export interface DrillItem {
   explanation: string;
   /** What a wrong answer counts as, for the weak spots. */
   category: MistakeCategory;
+  /**
+   * The umlaut is the grammar here (hätte or hatte), so a missing or extra
+   * one is a wrong answer, not a typing slip.
+   */
+  strictUmlauts?: boolean;
 }
 
 export interface GrammarDrill {
   /** The rule's name, as on the grammar item. */
   point: string;
   items: DrillItem[];
+  /** For a drill from a built-in topic: the topic and which of its bank items it asks. */
+  bank?: { topic: string; keys: string[] };
 }
 
 export interface ContrastWord {
@@ -66,7 +73,7 @@ export function gradeDrillItem(item: DrillItem, given: string): ItemResult {
   if (check.verdict === 'correct') {
     return { outcome: 'correct', slips: [], expected: check.expected, mistake: null };
   }
-  if (check.verdict === 'slip') {
+  if (check.verdict === 'slip' && !(item.strictUmlauts && check.slips.includes('umlaut'))) {
     const capitalization =
       check.slips.includes('capitalization') && !check.slips.includes('umlaut');
     return {

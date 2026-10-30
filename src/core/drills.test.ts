@@ -44,6 +44,18 @@ describe('grammar drill items', () => {
     expect(gradeDrillItem(item(), '')).toMatchObject({ outcome: 'wrong', mistake: null });
   });
 
+  it('counts a missing umlaut as wrong where the umlaut is the grammar', () => {
+    const haette = item({ answer: 'hätte', category: 'verb_form', explanation: 'Wish: hätte.' });
+    expect(gradeDrillItem({ ...haette, strictUmlauts: true }, 'hatte')).toMatchObject({
+      outcome: 'wrong',
+      mistake: { category: 'verb_form', correction: 'hätte', explanation: 'Wish: hätte.' },
+    });
+    // A capital letter is still only a slip.
+    expect(
+      gradeDrillItem({ ...item({ answer: 'Kinder' }), strictUmlauts: true }, 'kinder'),
+    ).toMatchObject({ outcome: 'slip' });
+  });
+
   it('rates a set: all right is right, slips or one miss is a slip, more is wrong', () => {
     const c = { outcome: 'correct' as const };
     const s = { outcome: 'slip' as const };
