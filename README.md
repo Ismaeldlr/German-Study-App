@@ -1,6 +1,6 @@
 # German Study
 
-A flashcard app for learning the German your class is teaching, at A2 level. It pairs a spaced-repetition scheduler (FSRS) with a cheap LLM, so every review uses a fresh sentence built around the words you are closest to forgetting.
+A flashcard app for learning the German your class is teaching, at A2 level. It pairs a spaced-repetition scheduler (FSRS) with a cheap LLM, so every review uses a fresh sentence built around the words you are closest to forgetting. A built-in grammar path follows the Momente textbook from A1 to B1 and needs no LLM at all.
 
 Built with React Native and Expo for one learner. Everything lives on the phone: no accounts, no server, and LLM spend capped at $2 a month.
 
@@ -50,11 +50,12 @@ Only the "LLM writes it" step needs a connection, and it rarely runs during a se
 - **Add words fast.** Type one word or paste a whole list in textbook notation (`die Wohnung, -en`, `umziehen, zog um, ist umgezogen`). An offline Wiktionary noun list double-checks the LLM's genders and plurals.
 - **A mixed session.** A warm-up of due cards, gap fills for words you are learning, translations for words you know well, grammar drills, then today's new words.
 - **Gap fills and translations.** The LLM writes new A2 sentences around your target words. Translations accept any correct German, mark each error and suggest a more natural version. Offline, answers wait and get graded later.
-- **Grammar points as cards.** Name a rule such as *Dativ nach mit, bei, von*; the LLM writes a summary and five-item drills.
+- **A built-in grammar path.** Every grammar point Momente teaches, A1.1 to B1.2: 72 lessons and 88 topics in 14 subjects, each with an explanation, tables, examples and a bank of 12 to 16 drill items. Follow the book lesson by lesson, search (*um zu*, *Konjunktiv 2*, *der die das*), or practise a whole subject such as Konjunktiv II in one tap. It ships with the app, so it works offline and costs nothing. Tell it which lesson class is on and that lesson waits on Home.
+- **Grammar points of your own.** Name a rule such as *Dativ nach mit, bei, von*; the LLM writes a summary and five-item drills. Topics the path already covers show up as you type, so you can use those instead.
 - **Mini stories and chat roleplay.** A short story around words you know, with underlined words to tap for their English, or a ten-message chat in a scenario where each message you write gets a correction folded under it.
 - **Weak spots.** Every mistake gets a category (articles, case endings, word order…). The scores fade over two weeks, the top one pulls its grammar into the next session, and any of them can be drilled in one tap.
 - **Leeches and mix-ups.** Cards you keep forgetting get a memory hook; words you confuse, such as *stellen* and *stehen*, come back together.
-- **Chapters and cram mode.** Paste the textbook's contents page once. Each chapter shows how much of it is mature. Before an exam, cram mode raises the target recall for its chapters and spreads two reviews of every card over the days left.
+- **Chapters and cram mode.** Paste the textbook's contents page once, or add a Momente level's 24 lessons in one tap. Each chapter shows how much of it is mature. Before an exam, cram mode raises the target recall for its chapters and spreads two reviews of every card over the days left.
 - **Stats.** Real recall over 7 and 30 days against your target, split by exercise, a 14-day forecast, minutes per day and LLM spend.
 - **Progress without guilt.** XP, a daily goal, streaks with freezes, levels with German titles and badges, all computed from the review log. An optional reminder names the work waiting (*23 reviews and 4 new words*) and stays quiet once you studied.
 - **Backups.** Export and import the whole deck as a JSON file. The API key never leaves secure storage.
@@ -104,6 +105,14 @@ You never grade yourself:
 | Right and clearly faster than your usual time on a review card | Easy |
 
 In stories and chats each target word gets its own rating. Tapping a word in a story counts as a lapse; reading it without help gives no rating, because reading is weaker evidence than producing.
+
+### Grammar drills: the bank first, the LLM later
+
+A topic from the grammar path becomes a grammar card like any other, scheduled by FSRS. Its drills are drawn from the topic's bank: each drill takes the items asked least, then longest ago, so the whole bank comes round before any item repeats. Every drawn drill is saved as a used exercise, which is how the bank remembers what it asked.
+
+Once every item in a bank has come up twice, the bank is worn and the prefetch asks the LLM for fresh drills on that topic; a cached LLM drill is used before the bank. Without a key, the bank simply keeps cycling. Where the umlaut is the grammar (*hätte* or *hatte*, *würde* or *wurde*), a missing one counts as wrong rather than as a typing slip.
+
+Practising chosen topics (a lesson, a subject, one topic) runs them as a session of their own, due or not, with eight items per drill instead of five.
 
 ### Weak spots and leeches
 
@@ -162,6 +171,7 @@ flowchart TB
 src/
   app/        Routes (Expo Router)
   core/       Pure logic: scheduling, planning, grading, weak spots, cram, stats
+  curriculum/ The grammar path: Momente syllabus, topics, explanations, drill banks
   data/       SQLite schema, migrations and repositories
   features/   Screens grouped by feature
   jobs/       Background work: prefetch, grading queue, chat turns
@@ -250,5 +260,7 @@ It prints days studied, answers and time, real recall per month and per exercise
 ## Status
 
 Every roadmap phase is built: the deck and scheduler, fresh content, production and grammar, stories and chat, stats and class sync, and end-to-end tests with a release build. Still ahead: a write-up of real recall numbers once there are three months of them, and audio through on-device text-to-speech.
+
+The grammar path follows the lesson order and grammar listed on the contents pages of *Momente* (Hueber Verlag); its explanations, examples and drill items are written for this app, which is not affiliated with Hueber.
 
 Noun genders and plurals for the offline check come from Wiktionary via the [german-nouns](https://github.com/gambolputty/german-nouns) list (CC BY-SA 4.0).
