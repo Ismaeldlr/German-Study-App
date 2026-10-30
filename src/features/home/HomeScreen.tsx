@@ -26,6 +26,7 @@ import { radius, spacing, useTheme } from '@/ui/theme';
 import { GradientCard, IconBubble, Lemma, ProgressRing, StatChip } from '@/ui/visuals';
 
 import { examIn } from '../chapters/CramScreen';
+import { GrammarHomeCard } from '../grammar/GrammarHomeCard';
 import { PracticeButtons } from '../practice/PracticeButtons';
 import { useServices } from '../services';
 import { useLiveQuery } from '../use-live-query';
@@ -160,7 +161,8 @@ export function HomeScreen() {
               Start your deck
             </AppText>
             <AppText style={{ textAlign: 'center' }}>
-              Paste the vocabulary list from class, or add words one by one.
+              Paste the vocabulary list from class, or add words one by one. The grammar path below
+              works right away.
             </AppText>
           </View>
           <Row style={{ flexWrap: 'nowrap' }}>
@@ -261,6 +263,10 @@ export function HomeScreen() {
           </GradientCard>
         </FadeIn>
       )}
+
+      <FadeIn delay={60}>
+        <GrammarHomeCard />
+      </FadeIn>
 
       {cram ? (
         <Nudge icon="📅" testID="cram-banner" bg={theme.primarySoft}>

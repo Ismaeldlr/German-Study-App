@@ -12,6 +12,8 @@ import {
   saveChapterList,
   updateChapter,
 } from '@/data/repos/chapters';
+import { LEVELS } from '@/curriculum';
+import { fillMomenteChapters } from '@/data/repos/curriculum';
 import { getSetting, setSetting } from '@/data/repos/settings';
 import { chapterStats } from '@/data/repos/stats';
 import type { ChapterRow } from '@/data/schema';
@@ -37,7 +39,9 @@ export function ChaptersScreen() {
   const theme = useTheme();
   const chapters = useLiveQuery(() => chapterStats(db), ['chapter', 'item', 'card']);
   const current = useLiveQuery(() => getSetting(db, 'study.currentChapterId'), ['settings']);
-  const [mode, setMode] = useState<'new' | 'paste' | null>(chapters.length ? null : 'new');
+  const [mode, setMode] = useState<'new' | 'paste' | 'momente' | null>(
+    chapters.length ? null : 'new',
+  );
 
   return (
     <Screen testID="chapters-screen" footer={<UmlautBar />}>
@@ -47,11 +51,14 @@ export function ChaptersScreen() {
           nextNumber={Math.max(0, ...chapters.map((c) => c.chapter.number)) + 1}
           onCancel={() => setMode(null)}
           onPaste={() => setMode('paste')}
+          onMomente={() => setMode('momente')}
           onSaved={(id, makeCurrent) => {
             if (makeCurrent) setSetting(db, 'study.currentChapterId', id);
             setMode(null);
           }}
         />
+      ) : mode === 'momente' ? (
+        <MomenteLessons onDone={() => setMode(null)} />
       ) : mode === 'paste' ? (
         <PasteChapters
           book={chapters[0]?.chapter.book ?? 'Momente A2'}
@@ -75,6 +82,13 @@ export function ChaptersScreen() {
               onPress={() => setMode('paste')}
             />
           </Row>
+          <Button
+            testID="chapter-momente"
+            label="Use the Momente lesson list"
+            icon="book-outline"
+            variant="secondary"
+            onPress={() => setMode('momente')}
+          />
           {chapters.length ? (
             <Button
               testID="chapters-cram"
@@ -133,6 +147,33 @@ export function coverageLine(counts: StateCounts): string {
   const active = counts.total - counts.suspended;
   if (!active) return 'no words yet';
   return `${Math.round(coverageShare(counts) * 100)}% mature · ${counts.mature} of ${plural(active, 'item')}`;
+}
+
+/** Add a Momente level's 24 lessons as chapters in one tap. */
+function MomenteLessons({ onDone }: { onDone: () => void }) {
+  const { db } = useServices();
+  return (
+    <Section title="Momente lessons" testID="chapter-momente-form">
+      <AppText>
+        Adds the 24 lessons of a Momente level as chapters, with their titles and themes. Chapters
+        you already have stay as they are.
+      </AppText>
+      <Row>
+        {LEVELS.map((level) => (
+          <Button
+            key={level}
+            testID={`chapter-momente-${level}`}
+            label={`Momente ${level}`}
+            onPress={() => {
+              fillMomenteChapters(db, level);
+              onDone();
+            }}
+          />
+        ))}
+      </Row>
+      <Button label="Cancel" variant="ghost" onPress={onDone} />
+    </Section>
+  );
 }
 
 /** Paste the book's contents page: one chapter per line, with its themes. */
@@ -194,6 +235,7 @@ export function ChapterForm({
   onCancel,
   onDelete,
   onPaste,
+  onMomente,
 }: {
   initial: ChapterRow | null;
   nextNumber: number;
@@ -202,6 +244,8 @@ export function ChapterForm({
   onDelete?: () => void;
   /** Switch to pasting the whole list instead. */
   onPaste?: () => void;
+  /** Switch to adding the Momente lesson list instead. */
+  onMomente?: () => void;
 }) {
   const { db } = useServices();
   const [number, setNumber] = useState(String(initial?.number ?? nextNumber));
@@ -271,6 +315,15 @@ export function ChapterForm({
           icon="clipboard-outline"
           variant="ghost"
           onPress={onPaste}
+        />
+      ) : null}
+      {onMomente ? (
+        <Button
+          testID="chapter-form-momente"
+          label="Use the Momente lesson list"
+          icon="book-outline"
+          variant="ghost"
+          onPress={onMomente}
         />
       ) : null}
       {onDelete ? (
