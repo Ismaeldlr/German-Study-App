@@ -11,6 +11,7 @@ import { DAY_MS, endOfLocalDay, startOfLocalDay } from '@/core/time';
 
 import type { DbOrTx } from '../db';
 import { card, grammarNote, item, type ItemRow } from '../schema';
+import { needsFreshDrills } from './curriculum';
 import { coverage, gapCoverage } from './exercises';
 import { getSetting } from './settings';
 import { waitingCardIds } from './study';
@@ -118,26 +119,34 @@ export function drillTargets(db: DbOrTx, now: Date): DrillTarget[] {
   const pulled = pullForwardGrammar(db, now);
   const rank = (c: { state: number; due: number; itemId: number }) =>
     pulled.has(c.itemId) ? 0 : c.state === CardState.New ? 2 : 1;
-  return db
-    .select({ card, item, note: grammarNote })
-    .from(card)
-    .innerJoin(item, eq(card.itemId, item.id))
-    .leftJoin(grammarNote, eq(grammarNote.itemId, item.id))
-    .where(
-      and(eq(item.status, 'active'), eq(card.suspended, false), eq(card.type, 'apply_grammar')),
-    )
-    .all()
-    .filter((r) => !covered.get(r.item.id))
-    .filter((r) => pulled.has(r.item.id) || r.card.state === CardState.New || r.card.due <= horizon)
-    .sort((a, b) => rank(a.card) - rank(b.card) || a.card.due - b.card.due || a.card.id - b.card.id)
-    .map((r) => ({
-      cardId: r.card.id,
-      itemId: r.item.id,
-      point: r.item.lemma,
-      summary: r.note?.ruleSummary ?? r.item.meanings.join('; '),
-      examples: r.note?.examples ?? [],
-      categories: r.note?.categories ?? [],
-    }));
+  return (
+    db
+      .select({ card, item, note: grammarNote })
+      .from(card)
+      .innerJoin(item, eq(card.itemId, item.id))
+      .leftJoin(grammarNote, eq(grammarNote.itemId, item.id))
+      .where(
+        and(eq(item.status, 'active'), eq(card.suspended, false), eq(card.type, 'apply_grammar')),
+      )
+      .all()
+      .filter((r) => !covered.get(r.item.id))
+      // A path topic drills from its bank until the bank is worn out.
+      .filter((r) => !r.item.curriculumId || needsFreshDrills(db, r.item.id))
+      .filter(
+        (r) => pulled.has(r.item.id) || r.card.state === CardState.New || r.card.due <= horizon,
+      )
+      .sort(
+        (a, b) => rank(a.card) - rank(b.card) || a.card.due - b.card.due || a.card.id - b.card.id,
+      )
+      .map((r) => ({
+        cardId: r.card.id,
+        itemId: r.item.id,
+        point: r.item.lemma,
+        summary: r.note?.ruleSummary ?? r.item.meanings.join('; '),
+        examples: r.note?.examples ?? [],
+        categories: r.note?.categories ?? [],
+      }))
+  );
 }
 
 /** A deck word a new story could be built around, with the item to check its forms against. */

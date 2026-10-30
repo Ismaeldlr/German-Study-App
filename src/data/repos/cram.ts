@@ -6,7 +6,7 @@ import { localDay, startOfLocalDay } from '@/core/time';
 
 import type { DbOrTx } from '../db';
 import { card, item, review } from '../schema';
-import { coverage } from './exercises';
+import { drillReadyItems } from './curriculum';
 import { getSetting, setSetting } from './settings';
 
 /**
@@ -107,7 +107,7 @@ export function cramCards(
       .all()
       .map((r) => r.cardId),
   );
-  const drillReady = coverage(db, 'grammar_drill');
+  const drillReady = drillReadyItems(db);
   return rows.map((r) => ({
     ...r,
     daysReviewed: days.get(r.cardId) ?? 0,
@@ -115,7 +115,7 @@ export function cramCards(
     available:
       !context.waiting.has(r.cardId) &&
       (r.type === 'apply_grammar'
-        ? Boolean(drillReady.get(r.itemId))
+        ? drillReady.has(r.itemId)
         : r.type === 'recognize' || r.state !== CardState.New || context.unlocked.has(r.itemId)),
   }));
 }

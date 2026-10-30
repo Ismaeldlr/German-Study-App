@@ -84,6 +84,8 @@ export const item = sqliteTable(
     notes: text('notes'),
     /** A mnemonic the LLM wrote once the item's card became a leech. */
     memoryHook: text('memory_hook'),
+    /** The built-in grammar topic this item practises, if it is one. */
+    curriculumId: text('curriculum_id'),
     createdAt: integer('created_at').notNull().$defaultFn(now),
     updatedAt: integer('updated_at').notNull().$defaultFn(now),
   },
@@ -91,6 +93,7 @@ export const item = sqliteTable(
     index('item_lemma_idx').on(t.lemma),
     index('item_chapter_idx').on(t.chapterId),
     index('item_kind_idx').on(t.kind),
+    uniqueIndex('item_curriculum_unique').on(t.curriculumId),
   ],
 );
 

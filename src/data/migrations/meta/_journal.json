@@ -29,6 +29,13 @@
       "when": 1792960177703,
       "tag": "0003_stories_chat",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1793003347347,
+      "tag": "0004_curriculum",
+      "breakpoints": true
     }
   ]
 }

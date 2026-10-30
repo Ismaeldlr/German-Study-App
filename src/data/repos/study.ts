@@ -32,7 +32,7 @@ import {
   type ItemRow,
 } from '../schema';
 import { activeCram, cramCards, isCrammed } from './cram';
-import { coverage } from './exercises';
+import { drillReadyItems } from './curriculum';
 import { grammarForCategory } from './grammar';
 import { getAllSettings } from './settings';
 import { pullForwardGrammar } from './weak-spots';
@@ -181,7 +181,7 @@ export function todayQueue(db: DbOrTx, now: Date): QueueEntry[] {
     newItemsAllowance: dailyAllowance(db, now, candidates) - newItemsIntroducedToday(db, now),
     unlockedItemIds: unlocked,
     siblingCap: SIBLING_CAP - newSiblingCardsToday(db, now),
-    drillReady: new Set(coverage(db, 'grammar_drill').keys()),
+    drillReady: drillReadyItems(db),
     pullForward: pullForwardGrammar(db, now),
     excludeCardIds: waiting,
     cram: todayCram(db, now, { unlocked, waiting }) ?? undefined,
@@ -201,9 +201,9 @@ export const FOCUS_SIZE = 10;
 export function focusQueue(db: DbOrTx, category: MistakeCategory): QueueEntry[] {
   const candidates = new Map(queueCandidates(db).map((c) => [c.cardId, c]));
   const waiting = waitingCardIds(db);
-  const drillReady = coverage(db, 'grammar_drill');
+  const drillReady = drillReadyItems(db);
   const grammar = grammarForCategory(db, category)
-    .filter((r) => drillReady.get(r.item.id) && candidates.has(r.card.id))
+    .filter((r) => drillReady.has(r.item.id) && candidates.has(r.card.id))
     .map((r) => candidates.get(r.card.id)!);
   const missed = db
     .select({ cardId: review.cardId })
