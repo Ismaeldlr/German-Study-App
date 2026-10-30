@@ -119,6 +119,8 @@ interface StudyStore {
   finisher: FinisherKind[];
   /** The weak spot a drill works on; null for the daily session. */
   focus: MistakeCategory | null;
+  /** The grammar topics a practice session is on, comma-separated; null otherwise. */
+  topics: string | null;
   present: (entry: QueueEntry) => Presentation;
   begin(
     sessionId: number,
@@ -130,9 +132,10 @@ interface StudyStore {
       baseline?: Baseline | null;
       finisher?: FinisherKind[];
       focus?: MistakeCategory | null;
+      topics?: string | null;
     },
   ): void;
-  empty(focus?: MistakeCategory | null): void;
+  empty(focus?: MistakeCategory | null, topics?: string | null): void;
   next(now: number): void;
   showQuestion(now: number): void;
   /** Ask the current card as a classic card instead, after a bad sentence. */
@@ -173,6 +176,7 @@ const initial = {
   baseline: null,
   finisher: [] as FinisherKind[],
   focus: null as MistakeCategory | null,
+  topics: null as string | null,
   present: () => CLASSIC,
 };
 
@@ -188,11 +192,12 @@ export const useStudyStore = create<StudyStore>((set, get) => ({
       baseline: options.baseline ?? null,
       finisher: options.finisher ?? [],
       focus: options.focus ?? null,
+      topics: options.topics ?? null,
     });
     get().next(now);
   },
-  empty(focus = null) {
-    set({ ...initial, phase: 'empty', focus });
+  empty(focus = null, topics = null) {
+    set({ ...initial, phase: 'empty', focus, topics });
   },
   next(now) {
     const { present } = get();

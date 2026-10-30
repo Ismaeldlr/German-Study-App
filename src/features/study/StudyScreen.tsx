@@ -1,10 +1,10 @@
 import { router, Stack } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { displayLemma } from '@/core/cards';
-import { itemsByWord, setGrade } from '@/core/drills';
+import { DRILL_SIZE, itemsByWord, setGrade } from '@/core/drills';
 import { finisherKinds } from '@/core/finisher';
 import { fillGap, gapHint } from '@/core/gap-fill';
 import type { MistakeNote } from '@/core/grading';
@@ -14,8 +14,10 @@ import type { QueueEntry } from '@/core/queue';
 import { ratingFor, type Outcome } from '@/core/rating';
 import { accuracy, progress, type SessionState } from '@/core/session';
 import { localDay } from '@/core/time';
+import { TOPIC_DRILL_SIZE } from '@/curriculum/bank';
 import type { Db } from '@/data/db';
 import { lastChatAt } from '@/data/repos/chats';
+import { takeGrammarDrill, topicQueue } from '@/data/repos/curriculum';
 import {
   discardExercise,
   lastShownAt,
@@ -91,40 +93,62 @@ import {
  * while you wait, or saved to be graded later. The cards end at your time
  * target or when the work runs out; on finisher days a mini story or a
  * short chat follows, unless you stopped the session yourself. With a
- * `focus`, it is a short drill on that weak spot instead of the daily work.
+ * `focus`, it is a short drill on that weak spot instead of the daily work;
+ * with `topics`, a practice round on those grammar topics, due or not.
  */
-export function StudyScreen({ focus = null }: { focus?: MistakeCategory | null }) {
+export function StudyScreen({
+  focus = null,
+  topics = null,
+}: {
+  focus?: MistakeCategory | null;
+  topics?: readonly string[] | null;
+}) {
   const services = useServices();
   const { db, now } = services;
   const online = useOnline();
   const store = useStudyStore();
   const [submitted, setSubmitted] = useState('');
+  const topicsKey = topics?.length ? topics.join(',') : null;
+
+  const begin = useCallback(() => {
+    const state = useStudyStore.getState();
+    const time = now().getTime();
+    const chosen = topicsKey ? topicsKey.split(',') : null;
+    const queue = chosen
+      ? topicQueue(db, chosen)
+      : focus
+        ? focusQueue(db, focus)
+        : todayQueue(db, now());
+    if (queue.length === 0) {
+      state.empty(focus, topicsKey);
+      return;
+    }
+    const drillSize = chosen ? TOPIC_DRILL_SIZE : DRILL_SIZE;
+    state.begin(startStudySession(db, time), queue, time, {
+      deadline: time + getSetting(db, 'study.sessionMinutes') * 60_000,
+      present: (entry) => presentEntry(db, entry, now().getTime(), drillSize),
+      baseline: baselineFor(db, now()),
+      // A drill or a practice round is a quick extra, so no story or chat follows it.
+      finisher:
+        focus || chosen
+          ? []
+          : finisherKinds({ story: lastShownAt(db, 'story'), chat: lastChatAt(db) }, now()),
+      focus,
+      topics: topicsKey,
+    });
+  }, [db, now, focus, topicsKey]);
 
   useEffect(() => {
     const state = useStudyStore.getState();
     const inProgress = state.phase !== 'idle' && state.phase !== 'done' && state.phase !== 'empty';
-    if (inProgress && state.day === localDay(now()) && state.focus === focus) return;
-    const time = now().getTime();
+    const same = state.focus === focus && state.topics === topicsKey;
+    if (inProgress && state.day === localDay(now()) && same) return;
     // A drill started mid-session ends the session it replaces.
     if (inProgress && state.sessionId !== null && state.session) {
-      finishStudySession(db, state.sessionId, sessionResult(state.session), time);
+      finishStudySession(db, state.sessionId, sessionResult(state.session), now().getTime());
     }
-    const queue = focus ? focusQueue(db, focus) : todayQueue(db, now());
-    if (queue.length === 0) {
-      state.empty(focus);
-      return;
-    }
-    state.begin(startStudySession(db, time), queue, time, {
-      deadline: time + getSetting(db, 'study.sessionMinutes') * 60_000,
-      present: (entry) => presentEntry(db, entry, now().getTime()),
-      baseline: baselineFor(db, now()),
-      // A drill is a quick extra, so no story or chat follows it.
-      finisher: focus
-        ? []
-        : finisherKinds({ story: lastShownAt(db, 'story'), chat: lastChatAt(db) }, now()),
-      focus,
-    });
-  }, [db, now, focus]);
+    begin();
+  }, [db, now, focus, topicsKey, begin]);
 
   // Close the session row when the session ends.
   const { phase, sessionId, session, presentation } = store;
@@ -400,7 +424,7 @@ export function StudyScreen({ focus = null }: { focus?: MistakeCategory | null }
   const { left, again } = session
     ? progress(session, store.entry !== null && phase !== 'feedback')
     : { left: 0, again: 0 };
-  const name = focus ? 'Drill' : 'Study';
+  const name = topicsKey ? 'Grammar' : focus ? 'Drill' : 'Study';
   const title =
     phase === 'done' || phase === 'empty'
       ? name
@@ -426,6 +450,24 @@ export function StudyScreen({ focus = null }: { focus?: MistakeCategory | null }
       }}
     />
   );
+
+  if (phase === 'empty' && topicsKey) {
+    return (
+      <Screen testID="study-empty">
+        {header}
+        <View style={styles.empty}>
+          <Text style={styles.emptyIcon}>🧩</Text>
+          <AppText variant="heading" style={{ textAlign: 'center' }}>
+            Nothing to practise here yet.
+          </AppText>
+          <AppText style={{ textAlign: 'center' }}>
+            Start a topic on the Grammar tab, then practise it here.
+          </AppText>
+        </View>
+        <Button label="Back" variant="secondary" onPress={() => router.back()} />
+      </Screen>
+    );
+  }
 
   if (phase === 'empty' && focus) {
     return (
@@ -487,6 +529,14 @@ export function StudyScreen({ focus = null }: { focus?: MistakeCategory | null }
           store.reset();
           router.back();
         }}
+        onAgain={
+          topicsKey
+            ? () => {
+                store.reset();
+                begin();
+              }
+            : undefined
+        }
       />
     );
   }
@@ -646,19 +696,24 @@ function baselineFor(db: Db, now: Date): Baseline {
 /**
  * Pick how an entry is asked, and mark a cached exercise used the moment
  * it is shown. Words you mix up come as a contrast set first; then grammar
- * cards get a drill, mature cards a translation, younger ones a gap
- * sentence, and anything without one is a classic card.
+ * cards get a drill (cached, or from a path topic's bank), mature cards a
+ * translation, younger ones a gap sentence, and anything without one is a
+ * classic card.
  */
-function presentEntry(db: Db, entry: QueueEntry, now: number): Presentation {
+function presentEntry(
+  db: Db,
+  entry: QueueEntry,
+  now: number,
+  drillSize: number = DRILL_SIZE,
+): Presentation {
   const study = getStudyCard(db, entry.cardId);
   if (!study) return { mode: 'skip' };
   const take = (id: number) => markExerciseUsed(db, id, now);
 
   if (entry.type === 'apply_grammar') {
-    const drill = nextExercise(db, 'grammar_drill', entry.itemId);
-    if (!drill) return { mode: 'skip' };
-    take(drill.id);
-    return { mode: 'grammar_drill', exerciseId: drill.id, drill: drill.payload };
+    const taken = takeGrammarDrill(db, entry.itemId, now, { size: drillSize });
+    if (!taken) return { mode: 'skip' };
+    return { mode: 'grammar_drill', exerciseId: taken.exerciseId, drill: taken.drill };
   }
   if (entry.type === 'produce' && entry.kind !== 'new_item') {
     const contrast = nextExercise(db, 'contrast', entry.itemId);

@@ -42,6 +42,7 @@ export function SessionSummary({
   bestCombo,
   baseline,
   onDone,
+  onAgain,
 }: {
   header: ReactNode;
   session: SessionState | null;
@@ -50,6 +51,8 @@ export function SessionSummary({
   bestCombo: number;
   baseline: Baseline | null;
   onDone: () => void;
+  /** Another round of the same practice, for a session on chosen topics. */
+  onAgain?: () => void;
 }) {
   const theme = useTheme();
   const { db, now } = useServices();
@@ -204,6 +207,16 @@ export function SessionSummary({
             />
           ))}
         </Section>
+      ) : null}
+      {onAgain ? (
+        <Button
+          testID="summary-again"
+          size="large"
+          icon="refresh"
+          label="Practise again"
+          variant="secondary"
+          onPress={onAgain}
+        />
       ) : null}
       <Button testID="summary-done" size="large" label="Done" onPress={onDone} />
     </Screen>
